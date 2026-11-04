@@ -1,0 +1,188 @@
+package com.scheduletl.service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.scheduletl.domain.AuthorizedShellCommand;
+import com.scheduletl.repository.AuthorizedShellCommandRepository;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
+
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+class ShellCommandExecutorTest {
+
+    @TempDir
+    Path approvedDirectory;
+
+    @Test
+    void rejectsPathsAndAcceptsOnlyAFileName() {
+        ShellCommandExecutor executor = executor(true, 2);
+
+        assertThrows(IllegalArgumentException.class, () -> executor.execute("{\"script\":\"../outside.sh\"}"));
+        assertThrows(IllegalArgumentException.class, () -> executor.execute("{\"script\":\"/tmp/outside.sh\"}"));
+        assertThrows(IllegalArgumentException.class, () -> executor.execute("{\"script\":\"test.sh\",\"command\":\"id\"}"));
+        assertThrows(IllegalArgumentException.class, () -> executor.execute("{\"command\":\"id\"}"));
+        assertThrows(IllegalArgumentException.class, () -> executor.execute("{\"commandId\":\"not-allowlisted\"}"));
+    }
+
+    @Test
+    void doesNotRunScriptsWhenExecutionIsDisabled() {
+        ShellCommandExecutor executor = executor(false, 2);
+
+        assertThrows(IllegalStateException.class, () -> executor.execute("{\"script\":\"test.sh\"}"));
+    }
+
+    @Test
+    void runsApprovedUnixScriptAndCapturesStandardOutputAndError() throws IOException, InterruptedException {
+        assumeFalse(isWindows(), "Unix shell integration test");
+        Files.writeString(approvedDirectory.resolve("approved.sh"), "printf 'stdout'; printf 'stderr' >&2\n");
+
+        ShellScriptExecutor.ExecutionResult result = executor(true, 2).execute("{\"script\":\"approved.sh\"}");
+
+        assertEquals(0, result.exitCode());
+        assertFalse(result.timedOut());
+        assertTrue(result.output().contains("stdout"));
+        assertTrue(result.output().contains("stderr"));
+    }
+
+    @Test
+    void listsOnlyScriptsCompatibleWithTheCurrentOperatingSystemAndShowsTheirType() throws IOException {
+        Files.writeString(approvedDirectory.resolve("approved.sh"), "echo ok\n");
+        Files.writeString(approvedDirectory.resolve("ignored.txt"), "not executable\n");
+        Files.writeString(approvedDirectory.resolve("approved.cmd"), "@echo off\r\necho no\r\n");
+
+        ShellCatalogService catalog = new ShellCatalogService(mock(AuthorizedShellCommandRepository.class));
+        ReflectionTestUtils.setField(catalog, "allowedDirectory", approvedDirectory.toString());
+        List<com.scheduletl.dto.ShellScriptOptionResponse> scripts = catalog.listScripts();
+
+        assertEquals(isWindows() ? 1 : 1, scripts.size());
+        assertEquals(isWindows() ? "approved.cmd" : "approved.sh", scripts.get(0).fileName());
+        assertEquals(isWindows() ? "CMD" : "SH", scripts.get(0).type());
+    }
+
+    @Test
+    void createsApprovedScriptsDirectoryWhenListingAnEmptyCatalog() throws IOException {
+        Path missingDirectory = approvedDirectory.resolve("not-created-yet");
+        ShellCatalogService catalog = new ShellCatalogService(mock(AuthorizedShellCommandRepository.class));
+        ReflectionTestUtils.setField(catalog, "allowedDirectory", missingDirectory.toString());
+
+        assertTrue(catalog.listScripts().isEmpty());
+        assertTrue(Files.isDirectory(missingDirectory));
+    }
+
+    @Test
+    void runsApprovedWindowsCommandFileAndCapturesOutput() throws IOException, InterruptedException {
+        assumeTrue(isWindows(), "Windows command integration test");
+        Files.writeString(approvedDirectory.resolve("approved.cmd"),
+                "@echo off\r\necho stdout\r\necho stderr 1>&2\r\nexit /b 0\r\n");
+
+        ShellScriptExecutor.ExecutionResult result = executor(true, 2).execute("{\"script\":\"approved.cmd\"}");
+
+        assertEquals(0, result.exitCode());
+        assertFalse(result.timedOut());
+        assertTrue(result.output().contains("stdout"));
+        assertTrue(result.output().contains("stderr"));
+    }
+
+    @Test
+    void stopsAnApprovedScriptWhenItExceedsTheTimeout() throws IOException, InterruptedException {
+        assumeFalse(isWindows(), "Unix shell integration test");
+        Files.writeString(approvedDirectory.resolve("slow.sh"), "sleep 5\n");
+
+        ShellScriptExecutor.ExecutionResult result = executor(true, 1).execute("{\"script\":\"slow.sh\"}");
+
+        assertTrue(result.timedOut());
+        assertEquals(-1, result.exitCode());
+        assertTrue(result.output().contains("timed out"));
+    }
+
+    @Test
+    void runnableCanOnlyBeStartedOnce() throws IOException, InterruptedException {
+        assumeFalse(isWindows(), "Unix shell integration test");
+        Files.writeString(approvedDirectory.resolve("single-run.sh"), "printf 'ran'\n");
+        Path script = approvedDirectory.resolve("single-run.sh").toRealPath();
+        ApprovedScriptRunnable task = new ApprovedScriptRunnable(
+                List.of("/bin/sh", script.toString()), approvedDirectory, java.time.Duration.ofSeconds(2));
+
+        task.run();
+
+        assertTrue(task.result().output().contains("ran"));
+        assertThrows(IllegalStateException.class, task::run);
+    }
+
+    @Test
+    void runsOnlyAConfiguredCommandAndCapturesItsOutput() throws IOException, InterruptedException {
+        assumeFalse(isWindows(), "Unix command integration test");
+        Path executable = Path.of("/usr/bin/printf");
+        assumeTrue(Files.isRegularFile(executable), "printf is not installed");
+        AuthorizedShellCommand command = authorizedCommand("print-status", "REPORT", executable,
+                List.of("approved command output"));
+        AuthorizedShellCommandRepository repository = repositoryFor(command);
+        ShellCommandExecutor executor = executor(true, 2, repository);
+
+        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"commandId\":\"print-status\"}");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("approved command output"));
+    }
+
+    @Test
+    void runsConfiguredWindowsCommandWithoutShellText() throws IOException, InterruptedException {
+        assumeTrue(isWindows(), "Windows command integration test");
+        String systemRoot = System.getenv("SystemRoot");
+        assumeTrue(systemRoot != null, "SystemRoot is not configured");
+        Path executable = Path.of(systemRoot, "System32", "hostname.exe");
+        assumeTrue(Files.isRegularFile(executable), "hostname.exe is not installed");
+        AuthorizedShellCommand command = authorizedCommand("host-name", "SYSTEM", executable, List.of());
+        ShellCommandExecutor executor = executor(true, 2, repositoryFor(command));
+
+        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"commandId\":\"host-name\"}");
+
+        assertEquals(0, result.exitCode());
+        assertFalse(result.output().isBlank());
+    }
+
+    private ShellCommandExecutor executor(boolean enabled, long timeoutSeconds) {
+        return executor(enabled, timeoutSeconds, mock(AuthorizedShellCommandRepository.class));
+    }
+
+    private ShellCommandExecutor executor(boolean enabled, long timeoutSeconds,
+                                          AuthorizedShellCommandRepository repository) {
+        return new ShellCommandExecutor(new ObjectMapper(), enabled, approvedDirectory.toString(), timeoutSeconds,
+                repository);
+    }
+
+    private AuthorizedShellCommand authorizedCommand(String id, String type, Path executable, List<String> arguments) {
+        AuthorizedShellCommand command = new AuthorizedShellCommand();
+        command.setId(id);
+        command.setLabel(id);
+        command.setType(type);
+        command.setExecutable(executable.toString());
+        command.setArguments(arguments);
+        return command;
+    }
+
+    private AuthorizedShellCommandRepository repositoryFor(AuthorizedShellCommand command) {
+        AuthorizedShellCommandRepository repository = mock(AuthorizedShellCommandRepository.class);
+        when(repository.findById(command.getId())).thenReturn(Optional.of(command));
+        return repository;
+    }
+
+    private boolean isWindows() {
+        return System.getProperty("os.name").toLowerCase().contains("win");
+    }
+}

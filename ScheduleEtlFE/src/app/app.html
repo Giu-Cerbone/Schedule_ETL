@@ -1,0 +1,194 @@
+<p-toast position="top-right" />
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand" href="#" (click)="$event.preventDefault(); setView('overview')">
+      <span class="brand-mark"><i class="pi pi-bolt"></i></span>
+      <span><strong>SchedulETL</strong><small>CONTROL CENTER</small></span>
+    </a>
+    <div class="workspace-label">WORKSPACE</div>
+    <nav class="main-nav" aria-label="Navigazione principale">
+      @for (item of navigation; track item.id) {
+        <button class="nav-link" [class.active]="view === item.id" (click)="setView(item.id)">
+          <i [class]="item.icon"></i><span>{{ item.label }}</span>
+          @if (item.id === 'schedulers') { <span class="nav-count">{{ schedulers.length }}</span> }
+          @if (item.id === 'shell-commands') { <span class="nav-count">{{ shellCommands.length + shellScripts.length }}</span> }
+        </button>
+      }
+      <button class="nav-link" [class.active]="view === 'history'" (click)="setView('history')">
+        <i class="pi pi-history"></i><span>Esecuzioni</span>
+      </button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="connection"><span class="connection-dot"></span><span>Backend API</span><strong>localhost:8080</strong></div>
+      <button class="nav-link" (click)="refresh()"><i class="pi pi-refresh"></i><span>Aggiorna dati</span></button>
+      <div class="user-chip"><span class="avatar">SA</span><span><strong>System Admin</strong><small>Amministratore</small></span><i class="pi pi-ellipsis-h"></i></div>
+    </div>
+  </aside>
+
+  <main class="main-area">
+    <header class="topbar">
+      <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>{{ view === 'overview' ? 'Dashboard' : view === 'ownership' ? 'Utenti e gruppi' : view === 'history' ? 'Esecuzioni' : view === 'processes' ? 'Processi' : 'Scheduler' }}</strong></div>
+      <div class="topbar-actions">
+        <span class="live-status"><span class="connection-dot"></span> Backend configurato</span>
+        <button pButton type="button" icon="pi pi-bell" class="p-button-text p-button-rounded bell-button" aria-label="Notifiche"></button>
+        <span class="avatar avatar-small">SA</span>
+      </div>
+    </header>
+
+    <section class="page-content">
+      @if (error) {
+        <div class="error-banner"><i class="pi pi-exclamation-triangle"></i><span>{{ error }}</span><button (click)="error = ''" aria-label="Chiudi"><i class="pi pi-times"></i></button></div>
+      }
+      @if (loading) {
+        <div class="loading-state"><i class="pi pi-spin pi-spinner"></i><span>Caricamento dati dal backend...</span></div>
+      } @else {
+        @switch (view) {
+          @case ('overview') {
+            <div class="page-heading">
+              <div><p class="eyebrow">PANORAMICA</p><h1>Buongiorno 👋</h1><p class="page-subtitle">Ecco cosa succede nei tuoi scheduler oggi.</p></div>
+              <div class="heading-actions"><button pButton label="Nuovo scheduler" icon="pi pi-plus" (click)="openDialog('scheduler')"></button></div>
+            </div>
+            <div class="metric-grid">
+              <article class="metric-card"><div class="metric-top"><span>Scheduler attivi</span><span class="metric-icon purple"><i class="pi pi-calendar"></i></span></div><strong>{{ activeSchedulerCount }}</strong><small><span class="trend-up"><i class="pi pi-arrow-up-right"></i> {{ schedulers.length }}</span> totali configurati</small></article>
+              <article class="metric-card"><div class="metric-top"><span>Processi monitorati</span><span class="metric-icon blue"><i class="pi pi-sitemap"></i></span></div><strong>{{ processes.length }}</strong><small>{{ enabledProcesses }} abilitati sullo scheduler selezionato</small></article>
+              <article class="metric-card"><div class="metric-top"><span>In esecuzione</span><span class="metric-icon green"><i class="pi pi-play-circle"></i></span></div><strong>{{ runningProcesses }}</strong><small>processi attualmente attivi</small></article>
+              <article class="metric-card"><div class="metric-top"><span>Profili e gruppi</span><span class="metric-icon orange"><i class="pi pi-users"></i></span></div><strong>{{ profiles.length }}<span class="metric-plus"> / {{ groups.length }}</span></strong><small>utenti / gruppi di lavoro</small></article>
+            </div>
+            <div class="dashboard-grid">
+              <article class="panel activity-panel">
+                <div class="panel-heading"><div><h2>Attività esecuzioni</h2><p>Ultima settimana · scheduler selezionato</p></div><p-select [options]="schedulers" optionLabel="name" optionValue="id" [ngModel]="selectedSchedulerId" (ngModelChange)="chooseScheduler($event)" placeholder="Seleziona scheduler" [showClear]="false"></p-select></div>
+                <div class="chart-area"><p-chart type="line" [data]="activityChartData" [options]="activityChartOptions"></p-chart></div>
+              </article>
+              <article class="panel status-panel">
+                <div class="panel-heading"><div><h2>Stato processi</h2><p>Distribuzione corrente</p></div><button class="icon-action" (click)="setView('processes')" aria-label="Vai ai processi"><i class="pi pi-arrow-up-right"></i></button></div>
+                @if (processes.length) { <div class="donut-wrap"><p-chart type="doughnut" [data]="stateChartData" [options]="stateChartOptions"></p-chart><span class="donut-total">{{ processes.length }}<small>processi</small></span></div> }
+                @else { <div class="empty-chart"><i class="pi pi-chart-pie"></i><span>Nessun processo per questo scheduler</span></div> }
+              </article>
+            </div>
+            <article class="panel pipeline-panel">
+              <div class="panel-heading"><div><h2>Flusso di processo</h2><p>{{ selectedScheduler?.name ?? 'Seleziona uno scheduler' }} · pipeline configurata</p></div><button pButton label="Gestisci processi" icon="pi pi-arrow-right" iconPos="right" class="p-button-text" (click)="setView('processes')"></button></div>
+              @if (processes.length) {
+                <div class="flow-track">
+                  @for (process of orderedProcesses; track process.id; let last = $last; let index = $index) {
+                    <div class="flow-node" [class.flow-running]="latestState(process.id) === 'RUNNING'">
+                      <span class="flow-step">STEP 0{{ index + 1 }}</span><span class="flow-icon"><i [class]="index === 0 ? 'pi pi-download' : index === processes.length - 1 ? 'pi pi-upload' : 'pi pi-cog'"></i></span><strong>{{ process.name }}</strong><small>{{ process.type }}</small>
+                      <p-tag [value]="stateLabel(latestState(process.id))" [severity]="stateSeverity(latestState(process.id))"></p-tag>
+                    </div>
+                    @if (!last) { <span class="flow-connector"><i class="pi pi-angle-right"></i></span> }
+                  }
+                </div>
+              } @else { <div class="empty-state">Aggiungi un processo per visualizzare il flusso.</div> }
+            </article>
+            <article class="panel table-panel">
+              <div class="panel-heading"><div><h2>Scheduler</h2><p>Stato e pianificazione dei tuoi scheduler</p></div><button pButton label="Vedi tutti" icon="pi pi-arrow-right" iconPos="right" class="p-button-text" (click)="setView('schedulers')"></button></div>
+              <p-table [value]="schedulers.slice(0, 5)" [rowTrackBy]="trackById">
+                <ng-template #header><tr><th>Nome scheduler</th><th>Owner</th><th>Gruppo</th><th>Pianificazione</th><th>Stato</th><th></th></tr></ng-template>
+                <ng-template #body let-scheduler><tr><td><button class="table-link" (click)="showSchedulerDetails(scheduler)"><span class="table-icon"><i class="pi pi-calendar"></i></span><span><strong>{{ scheduler.name }}</strong><small>#{{ scheduler.id }} · {{ scheduler.description || 'Nessuna descrizione' }}</small></span></button></td><td>{{ ownerName(scheduler.ownerProfileId) }}</td><td>{{ groupName(scheduler.groupId) }}</td><td><code>{{ scheduler.cronExpression }}</code></td><td><p-tag [value]="stateLabel(scheduler.status)" [severity]="stateSeverity(scheduler.status)"></p-tag></td><td><button class="icon-action" (click)="chooseScheduler(scheduler.id); setView('processes')" aria-label="Apri processi"><i class="pi pi-arrow-up-right"></i></button></td></tr></ng-template>
+                <ng-template #emptymessage><tr><td colspan="6"><div class="table-empty">Nessuno scheduler disponibile.</div></td></tr></ng-template>
+              </p-table>
+            </article>
+          }
+          @case ('schedulers') {
+            <div class="page-heading"><div><p class="eyebrow">CONFIGURAZIONE</p><h1>Scheduler</h1><p class="page-subtitle">Gestisci pianificazioni, owner e gruppi associati.</p></div><button pButton label="Crea scheduler" icon="pi pi-plus" (click)="openDialog('scheduler')"></button></div>
+            <article class="panel table-panel"><p-table [value]="schedulers" [rowTrackBy]="trackById">
+              <ng-template #header><tr><th>Scheduler</th><th>Owner</th><th>Gruppo</th><th>Espressione cron</th><th>Stato</th><th>Azioni</th></tr></ng-template>
+              <ng-template #body let-scheduler><tr><td><button class="table-link" (click)="showSchedulerDetails(scheduler)"><span><strong>{{ scheduler.name }}</strong><small>{{ scheduler.description || 'Nessuna descrizione' }}</small></span></button></td><td>{{ ownerName(scheduler.ownerProfileId) }}</td><td>{{ groupName(scheduler.groupId) }}</td><td><code>{{ scheduler.cronExpression }}</code></td><td><p-tag [value]="stateLabel(scheduler.status)" [severity]="stateSeverity(scheduler.status)"></p-tag></td><td class="row-actions"><button pButton icon="pi pi-users" class="p-button-text p-button-sm" (click)="chooseScheduler(scheduler.id); openDialog('assign')" aria-label="Assegna gruppo"></button><button pButton icon="pi pi-sitemap" class="p-button-text p-button-sm" (click)="chooseScheduler(scheduler.id); setView('processes')" aria-label="Gestisci processi"></button><button pButton icon="pi pi-trash" severity="danger" class="p-button-text p-button-sm" (click)="deleteScheduler(scheduler)" aria-label="Elimina scheduler"></button></td></tr></ng-template>
+              <ng-template #emptymessage><tr><td colspan="6"><div class="table-empty">Nessuno scheduler disponibile.</div></td></tr></ng-template>
+            </p-table></article>
+          }
+          @case ('processes') {
+            <div class="page-heading"><div><p class="eyebrow">MONITORAGGIO</p><h1>Processi</h1><p class="page-subtitle">Controlla lo stato e gestisci il ciclo di vita delle esecuzioni.</p></div><div class="heading-actions"><p-select [options]="schedulers" optionLabel="name" optionValue="id" [ngModel]="selectedSchedulerId" (ngModelChange)="chooseScheduler($event)" placeholder="Seleziona scheduler"></p-select><button pButton label="Nuovo processo" icon="pi pi-plus" [disabled]="selectedSchedulerId === null" (click)="openDialog('process')"></button></div></div>
+            <article class="panel table-panel"><div class="panel-heading compact-heading"><div><h2>{{ selectedScheduler?.name ?? 'Processi schedulati' }}</h2><p>{{ processes.length }} processi configurati · le azioni vengono inviate al backend</p></div><p-tag [value]="selectedScheduler ? stateLabel(selectedScheduler.status) : 'Nessuno scheduler'" [severity]="selectedScheduler ? stateSeverity(selectedScheduler.status) : 'secondary'"></p-tag></div>
+              <p-table [value]="orderedProcesses" [rowTrackBy]="trackById">
+                <ng-template #header><tr><th>Processo</th><th>Tipo</th><th>Stato</th><th>Abilitato</th><th>Controlli</th><th></th></tr></ng-template>
+                <ng-template #body let-process><tr><td><span class="process-name" [style.padding-left.px]="processDepth(process) * 18"><span class="table-icon process-icon"><i [class]="process.parentProcessId !== null ? 'pi pi-share-alt' : 'pi pi-cog'"></i></span><span><strong>{{ process.name }}</strong><small>{{ process.parentProcessId !== null ? 'Figlio di ' + parentProcessName(process.parentProcessId) : 'Processo padre' }} · ordine {{ process.sequenceOrder }}{{ process.description ? ' · ' + process.description : '' }}</small></span></span></td><td><span class="type-pill">{{ process.type }}</span></td><td><p-tag [value]="stateLabel(latestState(process.id))" [severity]="stateSeverity(latestState(process.id))"></p-tag></td><td><span class="enabled-indicator" [class.disabled]="!process.enabled"><i class="pi pi-circle-fill"></i>{{ process.enabled ? 'Sì' : 'No' }}</span></td><td class="process-controls">@for (action of processActions; track action.id) { <button pButton [icon]="action.icon" class="p-button-text p-button-sm control-button" [class.stop-button]="action.id === 'stop'" (click)="runProcess(action.id, process)" [attr.aria-label]="action.label + ' ' + process.name" [pTooltip]="action.label"></button> }</td><td class="row-actions"><button class="icon-action" (click)="openProcessDetails(process)" aria-label="Dettaglio processo" pTooltip="Dettaglio e console"><i class="pi pi-info-circle"></i></button><button class="icon-action" (click)="editProcess(process)" aria-label="Modifica processo" pTooltip="Modifica"><i class="pi pi-pencil"></i></button><button class="icon-action" (click)="addChildProcess(process)" aria-label="Aggiungi processo figlio" pTooltip="Aggiungi figlio"><i class="pi pi-plus"></i></button><button class="icon-action" (click)="openHistory(process)" aria-label="Cronologia" pTooltip="Cronologia"><i class="pi pi-history"></i></button></td></tr></ng-template>
+                <ng-template #emptymessage><tr><td colspan="6"><div class="table-empty">Nessun processo. Crea il primo processo per questo scheduler.</div></td></tr></ng-template>
+              </p-table>
+            </article>
+            @if (processes.length) { <article class="panel config-panel"><div class="panel-heading"><div><h2>Configurazioni processo</h2><p>Configurazione JSON ricevuta dalle API</p></div></div><div class="config-list">@for (process of processes; track process.id) { <div class="config-item"><span><strong>{{ process.name }}</strong><small>{{ process.type }}</small></span><pre>{{ process.configuration || '{}' }}</pre></div> }</div></article> }
+          }
+          @case ('shell-commands') {
+            <div class="page-heading"><div><p class="eyebrow">CONFIGURAZIONE ESECUTORE</p><h1>Comandi autorizzati</h1><p class="page-subtitle">Catalogo server-side degli script e dei comandi selezionabili nei processi SHELL_CMD.</p></div><button pButton label="Aggiorna catalogo" icon="pi pi-refresh" class="p-button-outlined" (click)="refreshShellCatalogs()"></button></div>
+            <div class="catalog-notice"><i class="pi pi-lock"></i><span>Il catalogo è definito sul backend: script nella directory approvata e comandi in <code>application.yml</code>. Da qui puoi consultare i tipi e verificare cosa è disponibile; i comandi non vengono modificati dal browser.</span></div>
+            <div class="ownership-grid shell-catalog-grid">
+              <article class="panel table-panel">
+                <div class="panel-heading"><div><h2>Script approvati</h2><p>{{ shellScripts.length }} script compatibili con il sistema backend</p></div>@if (adminAuth.authenticated) { <button pButton label="Nuovo script" icon="pi pi-plus" class="p-button-sm" (click)="newApprovedScript()"></button> }</div>
+                <p-table [value]="shellScripts">
+                  <ng-template #header><tr><th>Nome file</th><th>Tipo</th><th>Interprete</th><th></th></tr></ng-template>
+                  <ng-template #body let-script><tr><td><code>{{ script.fileName }}</code></td><td><p-tag [value]="script.type" severity="info"></p-tag></td><td>{{ script.type === 'SH' ? '/bin/sh' : script.type === 'POWERSHELL' ? 'PowerShell' : 'cmd.exe' }}</td><td class="row-actions">@if (adminAuth.authenticated) { <button class="icon-action" (click)="editApprovedScript(script.fileName)" aria-label="Modifica script"><i class="pi pi-pencil"></i></button><button class="icon-action" (click)="deleteApprovedScript(script.fileName)" aria-label="Elimina script"><i class="pi pi-trash"></i></button> }</td></tr></ng-template>
+                  <ng-template #emptymessage><tr><td colspan="4"><div class="table-empty">Nessuno script approvato trovato.</div></td></tr></ng-template>
+                </p-table>
+                @if (adminAuth.authenticated && scriptEditorOpen) {
+                  <div class="catalog-editor"><h3>{{ editingScriptName === null ? 'Nuovo script autorizzato' : 'Modifica script autorizzato' }}</h3><div class="form-grid"><label>Nome file <input pInputText [(ngModel)]="scriptForm.fileName" [disabled]="editingScriptName !== null" placeholder="es. export.sh" /><small>Estensioni consentite per questo server: .sh su Unix; .cmd, .bat o .ps1 su Windows.</small></label><label>Contenuto script <textarea pTextarea [(ngModel)]="scriptForm.content" rows="12" maxlength="262144" placeholder="#!/bin/sh&#10;echo completato"></textarea><small>Massimo 256 KiB. Il contenuto viene eseguito con i permessi dell'account backend.</small></label><div class="heading-actions"><button pButton label="Annulla" class="p-button-text" (click)="cancelScriptEdit()"></button><button pButton label="Salva script" icon="pi pi-check" [loading]="saving" (click)="saveApprovedScript()"></button></div></div></div>
+                }
+              </article>
+              <article class="panel table-panel">
+                <div class="panel-heading"><div><h2>Comandi autorizzati</h2><p>{{ shellCommands.length }} comandi configurati</p></div>@if (adminAuth.authenticated) { <button pButton label="Nuovo comando" icon="pi pi-plus" class="p-button-sm" (click)="newAuthorizedCommand()"></button> }</div>
+                <p-table [value]="shellCommands">
+                  <ng-template #header><tr><th>Identificativo</th><th>Comando</th><th>Tipo</th><th></th></tr></ng-template>
+                  <ng-template #body let-command><tr><td><code>{{ command.id }}</code></td><td><strong>{{ command.label }}</strong>@if (adminAuth.authenticated) { <small class="command-executable">{{ adminShellCommands.find(item => item.id === command.id)?.executable }}</small> }</td><td><p-tag [value]="command.type" severity="info"></p-tag></td><td class="row-actions">@if (adminAuth.authenticated) { <button class="icon-action" (click)="editAuthorizedCommandById(command.id)" aria-label="Modifica comando"><i class="pi pi-pencil"></i></button><button class="icon-action" (click)="deleteAuthorizedCommand(command)" aria-label="Elimina comando"><i class="pi pi-trash"></i></button> }</td></tr></ng-template>
+                  <ng-template #emptymessage><tr><td colspan="4"><div class="table-empty">Nessun comando autorizzato configurato.</div></td></tr></ng-template>
+                </p-table>
+                @if (adminAuth.authenticated && commandEditorOpen) {
+                  <div class="catalog-editor"><h3>{{ editingCommandId === null ? 'Nuovo comando autorizzato' : 'Modifica comando autorizzato' }}</h3><div class="form-grid"><label>ID <input pInputText [(ngModel)]="commandForm.id" [disabled]="editingCommandId !== null" placeholder="es. genera-report" /></label><label>Nome visualizzato <input pInputText [(ngModel)]="commandForm.label" /></label><label>Tipo <input pInputText [(ngModel)]="commandForm.type" placeholder="es. REPORT" /></label><label>Percorso eseguibile assoluto <input pInputText [(ngModel)]="commandForm.executable" placeholder="es. C:\\Tools\\tool.exe" /></label><label>Argomenti fissi (uno per riga) <textarea pTextarea [(ngModel)]="commandArgumentsText" rows="5"></textarea><small>Ogni riga è un singolo argomento passato direttamente all'eseguibile; non viene interpretata da una shell.</small></label><div class="heading-actions"><button pButton label="Annulla" class="p-button-text" (click)="cancelCommandEdit()"></button><button pButton label="Salva comando" icon="pi pi-check" [loading]="saving" (click)="saveAuthorizedCommand()"></button></div></div></div>
+                }
+              </article>
+            </div>
+            <article class="panel admin-access">
+              @if (!adminAuth.authenticated) {
+                <div class="panel-heading"><div><h2>Accesso amministratore</h2><p>Autenticati per creare, modificare o cancellare gli elementi eseguibili.</p></div></div>
+                <div class="admin-login"><label>Utente <input pInputText [(ngModel)]="adminUsername" autocomplete="username" /></label><label>Password <input pInputText type="password" [(ngModel)]="adminPassword" autocomplete="current-password" /></label><button pButton label="Accedi" icon="pi pi-lock" (click)="loginAdmin()"></button></div>
+              } @else {
+                <div class="panel-heading"><div><h2>Amministratore: {{ adminAuth.username }}</h2><p>Sessione attiva; le modifiche sono protette dal backend.</p></div><button pButton label="Esci" icon="pi pi-sign-out" class="p-button-outlined" (click)="logoutAdmin()"></button></div>
+              }
+            </article>
+          }
+          @case ('ownership') {
+            <div class="page-heading"><div><p class="eyebrow">ACCESSI E OWNERSHIP</p><h1>Utenti e gruppi</h1><p class="page-subtitle">Profili owner e gruppi utilizzabili negli scheduler.</p></div></div>
+            <div class="ownership-grid">
+              <article class="panel table-panel"><div class="panel-heading"><div><h2>Profili utente</h2><p>{{ profiles.length }} profili registrati</p></div><button pButton label="Nuovo profilo" icon="pi pi-plus" class="p-button-sm" (click)="openDialog('profile')"></button></div><p-table [value]="profiles" [rowTrackBy]="trackById"><ng-template #header><tr><th>Utente</th><th>Email</th><th></th></tr></ng-template><ng-template #body let-profile><tr><td><button class="table-link" (click)="showProfileDetails(profile)"><span class="avatar table-avatar">{{ profile.fullName.slice(0, 2).toUpperCase() }}</span><span><strong>{{ profile.fullName }}</strong><small>&#64;{{ profile.username }}</small></span></button></td><td>{{ profile.email }}</td><td><button class="icon-action" (click)="showProfileDetails(profile)" aria-label="Dettagli profilo"><i class="pi pi-arrow-up-right"></i></button></td></tr></ng-template></p-table></article>
+              <article class="panel table-panel"><div class="panel-heading"><div><h2>Gruppi di lavoro</h2><p>{{ groups.length }} gruppi registrati</p></div><button pButton label="Nuovo gruppo" icon="pi pi-plus" class="p-button-sm" (click)="openDialog('group')"></button></div><p-table [value]="groups" [rowTrackBy]="trackById"><ng-template #header><tr><th>Gruppo</th><th>Descrizione</th><th></th></tr></ng-template><ng-template #body let-group><tr><td><button class="table-link" (click)="showGroupDetails(group)"><span class="group-avatar"><i class="pi pi-users"></i></span><span><strong>{{ group.name }}</strong><small>Gruppo #{{ group.id }}</small></span></button></td><td>{{ group.description || '—' }}</td><td><button class="icon-action" (click)="showGroupDetails(group)" aria-label="Dettagli gruppo"><i class="pi pi-arrow-up-right"></i></button></td></tr></ng-template></p-table></article>
+            </div>
+          }
+          @case ('history') {
+            <div class="page-heading"><div><p class="eyebrow">AUDIT</p><h1>Cronologia esecuzioni</h1><p class="page-subtitle">{{ selectedProcess ? 'Processo: ' + selectedProcess.name : 'Seleziona la cronologia da un processo.' }}</p></div><button pButton label="Torna ai processi" icon="pi pi-arrow-left" class="p-button-outlined" (click)="setView('processes')"></button></div>
+            <article class="panel table-panel"><p-table [value]="executions" [rowTrackBy]="trackById"><ng-template #header><tr><th>Stato</th><th>Avvio</th><th>Fine</th><th>Exit code</th><th>Messaggio</th><th>Log</th></tr></ng-template><ng-template #body let-execution><tr><td><p-tag [value]="stateLabel(execution.state)" [severity]="stateSeverity(execution.state)"></p-tag></td><td>{{ execution.startedAt ? (execution.startedAt | date:'dd/MM/yyyy HH:mm:ss') : '—' }}</td><td>{{ execution.finishedAt ? (execution.finishedAt | date:'dd/MM/yyyy HH:mm:ss') : '—' }}</td><td>{{ execution.exitCode ?? '—' }}</td><td>{{ execution.statusMessage || '—' }}</td><td><pre class="log-cell">{{ execution.logs || '—' }}</pre></td></tr></ng-template><ng-template #emptymessage><tr><td colspan="6"><div class="table-empty">Nessuna esecuzione registrata per questo processo.</div></td></tr></ng-template></p-table></article>
+          }
+        }
+      }
+      <footer class="page-footer"><span>SchedulETL Control Center</span><span>API v1 <i class="pi pi-circle-fill"></i> Spring Boot</span></footer>
+    </section>
+  </main>
+</div>
+
+<p-dialog [header]="dialogMode === 'scheduler' ? 'Crea scheduler' : dialogMode === 'process' ? (editingProcessId === null ? 'Nuovo processo' : 'Modifica processo') : dialogMode === 'profile' ? 'Nuovo profilo utente' : dialogMode === 'group' ? 'Nuovo gruppo' : dialogMode === 'assign' ? 'Assegna a un gruppo' : detailsTitle" [(visible)]="dialogOpen" [modal]="true" [draggable]="false" [resizable]="false" [style]="{ width: 'min(540px, 94vw)' }">
+  @if (dialogMode === 'scheduler') {
+    <div class="form-grid"><label>Nome scheduler <input pInputText [(ngModel)]="schedulerForm.name" required /></label><label>Descrizione <textarea pTextarea [(ngModel)]="schedulerForm.description" rows="2"></textarea></label><label>Espressione cron <input pInputText [(ngModel)]="schedulerForm.cronExpression" required /><small>Esempio: 0 0 2 * * ?</small></label><label>Owner <p-select [options]="profiles" optionLabel="fullName" optionValue="id" [(ngModel)]="schedulerForm.ownerProfileId" placeholder="Seleziona un profilo"></p-select></label><label>Gruppo (opzionale) <p-select [options]="groups" optionLabel="name" optionValue="id" [(ngModel)]="schedulerForm.groupId" [showClear]="true" placeholder="Nessun gruppo"></p-select></label><label>Stato <p-select [options]="[{label:'Attivo',value:'ACTIVE'},{label:'Inattivo',value:'INACTIVE'},{label:'In pausa',value:'PAUSED'}]" optionLabel="label" optionValue="value" [(ngModel)]="schedulerForm.status"></p-select></label></div>
+  } @else if (dialogMode === 'process') {
+    <div class="form-grid"><label>Nome processo <input pInputText [(ngModel)]="processForm.name" required /></label><label>Tipo processo <p-select [options]="processTypes" optionLabel="code" optionValue="code" [(ngModel)]="processForm.type" (ngModelChange)="onProcessTypeChange($event)" placeholder="Seleziona il tipo" required></p-select><small>{{ processTypes.find(item => item.code === processForm.type)?.description }}</small></label><label>Processo padre (opzionale) <p-select [options]="availableParentProcesses" optionLabel="name" optionValue="id" [(ngModel)]="processForm.parentProcessId" [showClear]="true" placeholder="Processo principale"></p-select><small>Il padre avvia i processi figli in ordine sequenziale.</small></label><label>Ordine di esecuzione <input pInputText type="number" min="0" [(ngModel)]="processForm.sequenceOrder" /><small>Ordine tra processi con lo stesso padre, a partire da 0.</small></label><label>Descrizione <textarea pTextarea [(ngModel)]="processForm.description" rows="2"></textarea></label>
+      @if (processForm.type === 'SHELL_CMD') {
+        <label>Modalità esecuzione <p-select [options]="[{label:'Script approvato',value:'script'},{label:'Comando autorizzato',value:'command'}]" optionLabel="label" optionValue="value" [(ngModel)]="shellExecutionMode"></p-select></label>
+        @if (shellExecutionMode === 'script') {
+          <label>Script approvato <p-select [options]="shellScripts" optionLabel="fileName" optionValue="fileName" [(ngModel)]="shellScriptName" placeholder="Seleziona uno script approvato" [disabled]="shellScripts.length === 0"></p-select><small>Tipo: {{ selectedShellScriptType() }}. Gli script sono rilevati nella directory approvata configurata sul backend; il tipo/interprete dipende dall'estensione e dal sistema operativo.</small></label>
+          @if (shellScripts.length === 0) { <p class="dialog-copy">Nessuno script compatibile presente nella directory approvata sul backend.</p> }
+        } @else {
+          <label>Comando autorizzato <p-select [options]="shellCommands" optionLabel="label" optionValue="id" [(ngModel)]="shellCommandId" placeholder="Seleziona un comando configurato" [disabled]="shellCommands.length === 0"></p-select><small>Tipo: {{ selectedShellCommandType() }}. Comando/argomenti sono definiti dall'amministratore sul backend e l'esecuzione non passa da una shell. L'output appare nella console del dettaglio processo.</small></label>
+          @if (shellCommands.length === 0) { <p class="dialog-copy">Non ci sono comandi autorizzati configurati sul backend.</p> }
+        }
+      } @else {
+        <label>Configurazione (JSON o testo) <textarea pTextarea [(ngModel)]="processForm.configuration" rows="5"></textarea></label>
+      }
+      <label class="checkbox-label"><input type="checkbox" [(ngModel)]="processForm.enabled" /> Processo abilitato</label></div>
+  } @else if (dialogMode === 'profile') {
+    <div class="form-grid"><label>Username <input pInputText [(ngModel)]="profileForm.username" required /></label><label>Nome completo <input pInputText [(ngModel)]="profileForm.fullName" required /></label><label>Email <input pInputText type="email" [(ngModel)]="profileForm.email" required /></label></div>
+  } @else if (dialogMode === 'group') {
+    <div class="form-grid"><label>Nome gruppo <input pInputText [(ngModel)]="groupForm.name" required /></label><label>Descrizione <textarea pTextarea [(ngModel)]="groupForm.description" rows="3"></textarea></label></div>
+  } @else if (dialogMode === 'assign') {
+    <div class="form-grid"><p class="dialog-copy">Assegna lo scheduler <strong>{{ selectedScheduler?.name }}</strong> a un gruppo esistente.</p><label>Gruppo <p-select [options]="groups" optionLabel="name" optionValue="id" [(ngModel)]="assignGroupId" placeholder="Seleziona un gruppo"></p-select></label></div>
+  } @else if (selectedProcessDetails) {
+    <div class="process-detail"><div class="config-item"><span><strong>Tipo</strong><small>{{ selectedProcessDetails.type }}</small></span><span>{{ selectedProcessDetails.description || 'Nessuna descrizione' }}</span></div><div class="config-item"><span><strong>{{ selectedProcessDetails.type === 'SHELL_CMD' ? 'Target esecuzione' : 'Configurazione' }}</strong><small>{{ selectedProcessDetails.type === 'SHELL_CMD' ? 'Script o comando autorizzato' : 'Parametri processo' }}</small></span><pre>{{ selectedProcessDetails.type === 'SHELL_CMD' ? shellTargetDescription(selectedProcessDetails.configuration) : selectedProcessDetails.configuration || '—' }}</pre></div><h3>{{ selectedProcessDetails.type === 'SHELL_CMD' ? 'Console shell · stdout/stderr' : 'Log esecuzioni' }}</h3>@if (processDetailExecutions.length) { @for (execution of processDetailExecutions; track execution.id) { <section class="console-execution"><div class="console-heading"><p-tag [value]="stateLabel(execution.state)" [severity]="stateSeverity(execution.state)"></p-tag><span>{{ execution.startedAt ? (execution.startedAt | date:'dd/MM/yyyy HH:mm:ss') : '—' }} · Exit code: {{ execution.exitCode ?? '—' }}</span></div><pre class="console-output">{{ execution.logs || 'Nessun output console.' }}</pre></section> } } @else { <div class="empty-state">Nessuna esecuzione disponibile.</div> }</div>
+  } @else {
+    <pre class="details-json">{{ detailsText }}</pre>
+  }
+  @if (dialogMode) { <ng-template #footer><button pButton label="Annulla" class="p-button-text" (click)="dialogOpen = false"></button><button pButton label="Salva" icon="pi pi-check" [loading]="saving" (click)="saveDialog()"></button></ng-template> }
+</p-dialog>

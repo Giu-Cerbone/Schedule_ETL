@@ -1,0 +1,50 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:scheduletl;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        trace: false
+        web-allow-others: false
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+  sql:
+    init:
+      mode: always
+
+server:
+  port: 8080
+
+scheduletl:
+  admin:
+    username: ${SCHEDULETL_ADMIN_USERNAME:admin}
+    password: ${SCHEDULETL_ADMIN_PASSWORD:}
+  process:
+    shell:
+      enabled: false
+      allowed-directory: ./approved-scripts
+      timeout-seconds: 30
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+    tagsSorter: alpha
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE

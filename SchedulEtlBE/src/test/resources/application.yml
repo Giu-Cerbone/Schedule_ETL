@@ -1,0 +1,4 @@
+scheduletl:
+  admin:
+    username: test-admin
+    password: test-admin-password
