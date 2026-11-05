@@ -71,12 +71,28 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
             workingDirectory = root;
         } else {
             AuthorizedShellCommand definition = findConfiguredCommand(readCommandId(target));
-            Path executable = Path.of(definition.getExecutable());
-            if (!executable.isAbsolute() || !Files.isRegularFile(executable)) {
-                throw new IllegalStateException("The configured command executable is not an available absolute file path.");
-            }
+            Path executable = Path.of(definition.getExecutable().trim());
             command = new ArrayList<>();
-            command.add(executable.toString());
+            if (ShellCatalogService.isBareCommandName(executable)) {
+                String name = executable.toString();
+                if (ShellCatalogService.CMD_BUILTINS.contains(name.toLowerCase())) {
+                    if (!isWindows()) {
+                        throw new IllegalStateException("The internal command '" + name + "' is only available on Windows.");
+                    }
+                    // Internal cmd.exe commands are not files
+                    command.add("cmd.exe");
+                    command.add("/d");
+                    command.add("/c");
+                } else if (!ShellCatalogService.resolveOnPath(name)) {
+                    throw new IllegalStateException("The command '" + name + "' is not a known internal command and was not found in PATH.");
+                }
+                command.add(name);
+            } else {
+                if (!executable.isAbsolute() || !Files.isRegularFile(executable)) {
+                    throw new IllegalStateException("The configured command executable is not an available absolute file path.");
+                }
+                command.add(executable.toString());
+            }
             command.addAll(definition.getArguments());
             workingDirectory = allowedDirectory.toAbsolutePath().normalize();
         }

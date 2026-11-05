@@ -214,16 +214,16 @@ public class ShellCatalogService {
         return request;
     }
 
-    private static final java.util.Set<String> CMD_BUILTINS = java.util.Set.of(
+    static final java.util.Set<String> CMD_BUILTINS = java.util.Set.of(
             "dir", "cls", "echo", "type", "copy", "move", "del", "ver", "set", "cd", "md", "mkdir", "rd", "rmdir",
             "ren", "rename", "date", "time", "vol", "title");
 
-    private static boolean isBareCommandName(Path path) {
+    static boolean isBareCommandName(Path path) {
         return !path.isAbsolute() && path.getNameCount() == 1 && path.getParent() == null
                 && !path.toString().contains("/") && !path.toString().contains("\\");
     }
 
-    private static boolean resolveOnPath(String name) {
+    static boolean resolveOnPath(String name) {
         String pathEnv = System.getenv("PATH");
         if (pathEnv == null) return false;
         List<String> candidates = new java.util.ArrayList<>(List.of(name));
