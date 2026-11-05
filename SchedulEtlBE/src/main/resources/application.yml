@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:scheduletl;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    url: jdbc:h2:file:${scheduletl.database.directory}/${scheduletl.database.name};MODE=PostgreSQL;AUTO_SERVER=FALSE;DB_CLOSE_ON_EXIT=FALSE
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -19,6 +19,14 @@ spring:
     properties:
       hibernate:
         format_sql: true
+      jakarta:
+        persistence:
+          schema-generation:
+            database:
+              action: update
+            scripts:
+              action: create
+              create-target: ${scheduletl.database.ddl-directory}/create_schema.sql
   sql:
     init:
       mode: always
@@ -27,14 +35,18 @@ server:
   port: 8080
 
 scheduletl:
+  database:
+    directory: ./mydb
+    name: mydb
+    ddl-directory: ./ddl_mydb
   admin:
     username: ${SCHEDULETL_ADMIN_USERNAME:admin}
-    password: ${SCHEDULETL_ADMIN_PASSWORD:}
+    password: ${SCHEDULETL_ADMIN_PASSWORD:admin}
   process:
     shell:
-      enabled: false
+      enabled: true
       allowed-directory: ./approved-scripts
-      timeout-seconds: 30
+      timeout-seconds: 180
 
 springdoc:
   api-docs:

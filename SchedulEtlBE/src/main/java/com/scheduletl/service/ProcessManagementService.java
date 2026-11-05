@@ -48,8 +48,8 @@ public class ProcessManagementService {
         definition.setDescription(request.description());
         definition.setConfiguration(request.configuration());
         definition.setEnabled(request.enabled());
-        definition.setSequenceOrder(request.sequenceOrder() != null ? request.sequenceOrder() : 0);
         definition.setParentProcess(findParentProcess(schedulerId, null, request.parentProcessId()));
+        definition.setSequenceOrder(newSequenceOrder(schedulerId, definition.getParentProcess(), request.sequenceOrder()));
 
         ProcessDefinition saved = processDefinitionRepository.save(definition);
         return toDefinitionResponse(saved);
@@ -59,20 +59,138 @@ public class ProcessManagementService {
     public ProcessDefinitionResponse updateProcessDefinition(Long schedulerId, Long processDefinitionId,
                                                              CreateProcessDefinitionRequest request) {
         ProcessDefinition definition = findProcessDefinition(schedulerId, processDefinitionId);
+        ProcessType type = findProcessType(request.type());
+        ProcessDefinition newParent = findParentProcess(schedulerId, processDefinitionId, request.parentProcessId());
+        applySequenceOrder(schedulerId, definition, newParent, request.sequenceOrder());
         definition.setName(request.name());
-        definition.setType(findProcessType(request.type()));
+        definition.setType(type);
         definition.setDescription(request.description());
         definition.setConfiguration(request.configuration());
         definition.setEnabled(request.enabled());
-        definition.setSequenceOrder(request.sequenceOrder() != null ? request.sequenceOrder() : 0);
-        definition.setParentProcess(findParentProcess(schedulerId, processDefinitionId, request.parentProcessId()));
+        definition.setParentProcess(newParent);
         return toDefinitionResponse(processDefinitionRepository.save(definition));
+    }
+
+    private static ProcessDefinition rootOf(ProcessDefinition definition) {
+        ProcessDefinition current = definition;
+        while (current.getParentProcess() != null) {
+            current = current.getParentProcess();
+        }
+        return current;
+    }
+
+    private List<ProcessDefinition> treeMembers(Long schedulerId, ProcessDefinition root) {
+        return processDefinitionRepository.findBySchedulerIdOrderByParentProcessIdAscSequenceOrderAscIdAsc(schedulerId)
+                .stream()
+                .filter(item -> rootOf(item).getId().equals(root.getId()))
+                .toList();
+    }
+
+    private int newSequenceOrder(Long schedulerId, ProcessDefinition parent, Integer requested) {
+        if (parent == null) {
+            return 0;
+        }
+        List<ProcessDefinition> members = treeMembers(schedulerId, rootOf(parent));
+        if (requested == null) {
+            return members.stream().mapToInt(ProcessDefinition::getSequenceOrder).max().orElse(0) + 1;
+        }
+        if (requested < 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Order 0 is reserved to the root process; child processes start from 1");
+        }
+        if (members.stream().anyMatch(item -> item.getSequenceOrder() == requested)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Another process in this hierarchy already uses execution order " + requested);
+        }
+        return requested;
+    }
+
+    /** Root processes are always 0; descendants keep a unique order in their hierarchy, swapping on a clash. */
+    private void applySequenceOrder(Long schedulerId, ProcessDefinition definition, ProcessDefinition newParent,
+                                    Integer requested) {
+        if (newParent == null) {
+            definition.setSequenceOrder(0);
+            return;
+        }
+        ProcessDefinition targetRoot = rootOf(newParent);
+        boolean sameTree = rootOf(definition).getId().equals(targetRoot.getId());
+        List<ProcessDefinition> subtree = descendantsAndSelf(schedulerId, definition);
+        List<ProcessDefinition> others = treeMembers(schedulerId, targetRoot).stream()
+                .filter(item -> subtree.stream().noneMatch(node -> node.getId().equals(item.getId())))
+                .toList();
+
+        if (sameTree) {
+            int oldOrder = definition.getSequenceOrder();
+            int target = requested != null ? requested : oldOrder;
+            if (target < 1) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Order 0 is reserved to the root process; child processes start from 1");
+            }
+            ProcessDefinition clash = treeMembers(schedulerId, targetRoot).stream()
+                    .filter(item -> !item.getId().equals(definition.getId()) && item.getSequenceOrder() == target)
+                    .findFirst().orElse(null);
+            if (clash != null) {
+                clash.setSequenceOrder(oldOrder >= 1 ? oldOrder
+                        : treeMembers(schedulerId, targetRoot).stream()
+                                .mapToInt(ProcessDefinition::getSequenceOrder).max().orElse(0) + 1);
+                processDefinitionRepository.save(clash);
+            }
+            definition.setSequenceOrder(target);
+            return;
+        }
+
+        int target = requested != null ? requested
+                : Math.max(others.stream().mapToInt(ProcessDefinition::getSequenceOrder).max().orElse(0),
+                subtree.stream().filter(node -> !node.getId().equals(definition.getId()))
+                        .mapToInt(ProcessDefinition::getSequenceOrder).max().orElse(0)) + 1;
+        if (target < 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Order 0 is reserved to the root process; child processes start from 1");
+        }
+        java.util.Set<Integer> used = new java.util.HashSet<>();
+        others.forEach(item -> used.add(item.getSequenceOrder()));
+        boolean clash = !used.add(target);
+        for (ProcessDefinition node : subtree) {
+            if (!node.getId().equals(definition.getId()) && !used.add(node.getSequenceOrder())) {
+                clash = true;
+            }
+        }
+        if (clash) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Execution orders of the moved process tree clash with the destination hierarchy");
+        }
+        definition.setSequenceOrder(target);
+    }
+
+    private List<ProcessDefinition> descendantsAndSelf(Long schedulerId, ProcessDefinition definition) {
+        return processDefinitionRepository.findBySchedulerIdOrderByParentProcessIdAscSequenceOrderAscIdAsc(schedulerId)
+                .stream()
+                .filter(item -> {
+                    for (ProcessDefinition current = item; current != null; current = current.getParentProcess()) {
+                        if (current.getId().equals(definition.getId())) return true;
+                    }
+                    return false;
+                })
+                .toList();
     }
 
     @Transactional
     public ProcessExecutionResponse startProcess(Long schedulerId, Long processDefinitionId) {
         ProcessDefinition definition = findProcessDefinition(schedulerId, processDefinitionId);
+        queueDescendants(definition);
         return executeTreeCommand(definition, ProcessCommand.START, ProcessState.RUNNING, "Process started successfully");
+    }
+
+    /** Resets every enabled descendant to QUEUED so a (re)start never leaves a stale previous state on the children. */
+    private void queueDescendants(ProcessDefinition parent) {
+        for (ProcessDefinition child : processDefinitionRepository
+                .findByParentProcessIdOrderBySequenceOrderAscIdAsc(parent.getId())) {
+            if (child.isEnabled()) {
+                executeCommand(child, ProcessCommand.RESTART, ProcessState.QUEUED,
+                        "Queued for restart of parent process " + parent.getId());
+                queueDescendants(child);
+            }
+        }
     }
 
     @Transactional

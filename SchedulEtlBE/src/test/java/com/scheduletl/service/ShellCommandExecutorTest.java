@@ -2,7 +2,9 @@ package com.scheduletl.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scheduletl.domain.AuthorizedShellCommand;
+import com.scheduletl.domain.RegisteredShellScript;
 import com.scheduletl.repository.AuthorizedShellCommandRepository;
+import com.scheduletl.repository.RegisteredShellScriptRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -99,6 +101,26 @@ class ShellCommandExecutorTest {
     }
 
     @Test
+    void runsAScriptRegisteredByAbsolutePathOutsideTheApprovedDirectory(@TempDir Path elsewhere)
+            throws IOException, InterruptedException {
+        assumeTrue(isWindows(), "Windows command integration test");
+        Path script = elsewhere.resolve("external.cmd");
+        Files.writeString(script, "@echo off\r\necho external\r\nexit /b 0\r\n");
+        RegisteredShellScript registered = new RegisteredShellScript();
+        registered.setId("external.cmd");
+        registered.setPath(script.toString());
+        RegisteredShellScriptRepository registry = mock(RegisteredShellScriptRepository.class);
+        when(registry.findById("external.cmd")).thenReturn(Optional.of(registered));
+        ShellCommandExecutor executor = new ShellCommandExecutor(new ObjectMapper(), true,
+                approvedDirectory.toString(), 2, mock(AuthorizedShellCommandRepository.class), registry);
+
+        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"script\":\"external.cmd\"}");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("external"));
+    }
+
+    @Test
     void stopsAnApprovedScriptWhenItExceedsTheTimeout() throws IOException, InterruptedException {
         assumeFalse(isWindows(), "Unix shell integration test");
         Files.writeString(approvedDirectory.resolve("slow.sh"), "sleep 5\n");
@@ -163,7 +185,7 @@ class ShellCommandExecutorTest {
     private ShellCommandExecutor executor(boolean enabled, long timeoutSeconds,
                                           AuthorizedShellCommandRepository repository) {
         return new ShellCommandExecutor(new ObjectMapper(), enabled, approvedDirectory.toString(), timeoutSeconds,
-                repository);
+                repository, mock(RegisteredShellScriptRepository.class));
     }
 
     private AuthorizedShellCommand authorizedCommand(String id, String type, Path executable, List<String> arguments) {

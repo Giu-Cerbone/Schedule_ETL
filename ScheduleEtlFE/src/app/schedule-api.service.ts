@@ -9,6 +9,8 @@ import {
   ApprovedShellScript,
   ApprovedShellScriptRequest,
   AuthorizedShellCommand,
+  FileBrowseResponse,
+  RegisteredShellScript,
   ProcessDefinition,
   ProcessExecution,
   ProcessType,
@@ -100,6 +102,22 @@ export class ScheduleApiService {
 
   deleteApprovedScript(fileName: string): Observable<void> {
     return this.http.delete<void>(`${this.baseUrl}/admin/shell-scripts/${encodeURIComponent(fileName)}`);
+  }
+
+  browseServerFiles(path: string): Observable<FileBrowseResponse> {
+    return this.http.get<FileBrowseResponse>(`${this.baseUrl}/admin/filesystem`, { params: { path } });
+  }
+
+  listRegisteredScripts(): Observable<RegisteredShellScript[]> {
+    return this.http.get<RegisteredShellScript[]>(`${this.baseUrl}/admin/registered-scripts`);
+  }
+
+  registerScript(id: string, path: string): Observable<RegisteredShellScript> {
+    return this.http.post<RegisteredShellScript>(`${this.baseUrl}/admin/registered-scripts`, { id, path });
+  }
+
+  unregisterScript(id: string): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/admin/registered-scripts/${encodeURIComponent(id)}`);
   }
 
   createProcess(schedulerId: number, request: CreateProcess): Observable<ProcessDefinition> {

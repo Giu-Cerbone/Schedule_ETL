@@ -5,6 +5,7 @@ import com.scheduletl.domain.ProcessExecution;
 import com.scheduletl.domain.ProcessType;
 import com.scheduletl.domain.Scheduler;
 import com.scheduletl.dto.CreateProcessDefinitionRequest;
+import com.scheduletl.dto.ProcessDefinitionResponse;
 import com.scheduletl.dto.ProcessExecutionResponse;
 import com.scheduletl.repository.ProcessDefinitionRepository;
 import com.scheduletl.repository.ProcessExecutionRepository;
@@ -75,7 +76,8 @@ class ProcessManagementServiceTest {
         ProcessExecutionResponse response = service.startProcess(scheduler.getId(), parent.getId());
 
         assertEquals(parent.getId(), response.processDefinitionId());
-        assertEquals(List.of(parent.getId(), firstChild.getId(), secondChild.getId()), executionOrder);
+        assertEquals(List.of(firstChild.getId(), secondChild.getId(),
+                parent.getId(), firstChild.getId(), secondChild.getId()), executionOrder);
     }
 
     @Test
@@ -129,6 +131,45 @@ class ProcessManagementServiceTest {
         assertEquals("hello from script", response.logs());
         assertEquals(0, response.exitCode());
         assertEquals(com.scheduletl.domain.ProcessState.COMPLETED, response.state());
+    }
+
+    @Test
+    void swapsOrdersWhenAChildTakesAnOrderAlreadyUsedInTheHierarchy() {
+        Scheduler scheduler = scheduler();
+        ProcessDefinition root = process(1L, scheduler, null, 0, true);
+        ProcessDefinition first = process(2L, scheduler, root, 1, true);
+        ProcessDefinition second = process(3L, scheduler, root, 2, true);
+        when(processDefinitionRepository.findById(first.getId())).thenReturn(Optional.of(first));
+        when(processDefinitionRepository.findById(root.getId())).thenReturn(Optional.of(root));
+        when(processDefinitionRepository.findBySchedulerIdOrderByParentProcessIdAscSequenceOrderAscIdAsc(scheduler.getId()))
+                .thenReturn(List.of(root, first, second));
+        when(processTypeRepository.findById("SQLDATABASE")).thenReturn(Optional.of(processType()));
+        when(processDefinitionRepository.save(any(ProcessDefinition.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        ProcessDefinitionResponse response = service.updateProcessDefinition(scheduler.getId(), first.getId(),
+                new CreateProcessDefinitionRequest("Process 2", "SQLDATABASE", null, null, true, root.getId(), 2));
+
+        assertEquals(2, response.sequenceOrder());
+        assertEquals(1, second.getSequenceOrder());
+    }
+
+    @Test
+    void rejectsACreatedChildWithAnOrderAlreadyUsedInTheHierarchy() {
+        Scheduler scheduler = scheduler();
+        ProcessDefinition root = process(1L, scheduler, null, 0, true);
+        ProcessDefinition child = process(2L, scheduler, root, 1, true);
+        when(processDefinitionRepository.findById(root.getId())).thenReturn(Optional.of(root));
+        when(processDefinitionRepository.findBySchedulerIdOrderByParentProcessIdAscSequenceOrderAscIdAsc(scheduler.getId()))
+                .thenReturn(List.of(root, child));
+        when(processTypeRepository.findById("SQLDATABASE")).thenReturn(Optional.of(processType()));
+        SchedulerRepository schedulerRepository = mock(SchedulerRepository.class);
+        when(schedulerRepository.findById(scheduler.getId())).thenReturn(Optional.of(scheduler));
+        ProcessManagementService creator = new ProcessManagementService(schedulerRepository,
+                processDefinitionRepository, processExecutionRepository, processTypeRepository, shellCommandExecutor);
+
+        assertThrows(ResponseStatusException.class, () -> creator.createProcessDefinition(scheduler.getId(),
+                new CreateProcessDefinitionRequest("New", "SQLDATABASE", null, null, true, root.getId(), 1)));
     }
 
     private Scheduler scheduler() {

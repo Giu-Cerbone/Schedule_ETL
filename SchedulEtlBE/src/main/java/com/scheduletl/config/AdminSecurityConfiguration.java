@@ -24,6 +24,7 @@ public class AdminSecurityConfiguration {
     SecurityFilterChain apiSecurity(HttpSecurity http) throws Exception {
         return http
                 .csrf(csrf -> csrf.disable())
+                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/v1/shell-commands/**", "/api/v1/shell-scripts/**").permitAll()

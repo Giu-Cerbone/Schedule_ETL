@@ -33,7 +33,7 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class ShellCatalogService {
 
-    private static final Pattern FILE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(sh|cmd|bat|ps1)");
+    static final Pattern FILE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(sh|cmd|bat|ps1)");
 
     private final AuthorizedShellCommandRepository commandRepository;
     @Value("${scheduletl.process.shell.allowed-directory:./approved-scripts}")
@@ -89,7 +89,7 @@ public class ShellCatalogService {
                     .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     .map(path -> path.getFileName().toString())
                     .filter(name -> FILE_NAME.matcher(name).matches())
-                    .map(name -> scriptType(name).map(type -> new ShellScriptOptionResponse(name, type)).orElse(null))
+                    .map(name -> scriptType(name).map(type -> new ShellScriptOptionResponse(name, name, type)).orElse(null))
                     .filter(java.util.Objects::nonNull)
                     .sorted(Comparator.comparing(ShellScriptOptionResponse::fileName))
                     .toList();
@@ -171,7 +171,7 @@ public class ShellCatalogService {
                 "The script extension is not supported on this backend operating system."));
     }
 
-    private java.util.Optional<String> scriptType(String fileName) {
+    static java.util.Optional<String> scriptType(String fileName) {
         String name = fileName.toLowerCase(Locale.ROOT);
         boolean windows = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win");
         if (!windows && name.endsWith(".sh")) return java.util.Optional.of("SH");
@@ -198,13 +198,50 @@ public class ShellCatalogService {
         } catch (RuntimeException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Executable path is invalid.");
         }
+        if (isBareCommandName(executable)) {
+            if (!CMD_BUILTINS.contains(executable.toString().toLowerCase()) && !resolveOnPath(executable.toString())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Command was not found in PATH and is not a known shell builtin.");
+            }
+            return request;
+        }
         if (!executable.isAbsolute()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Executable must be an absolute path.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Executable must be an absolute path or a bare command name.");
         }
         if (!Files.isRegularFile(executable)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Executable must reference an existing file.");
         }
         return request;
+    }
+
+    static final java.util.Set<String> CMD_BUILTINS = java.util.Set.of(
+            "dir", "cls", "echo", "type", "copy", "move", "del", "ver", "set", "cd", "md", "mkdir", "rd", "rmdir",
+            "ren", "rename", "date", "time", "vol", "title");
+
+    static boolean isBareCommandName(Path path) {
+        return !path.isAbsolute() && path.getNameCount() == 1 && path.getParent() == null
+                && !path.toString().contains("/") && !path.toString().contains("\\");
+    }
+
+    static boolean resolveOnPath(String name) {
+        String pathEnv = System.getenv("PATH");
+        if (pathEnv == null) return false;
+        List<String> candidates = new java.util.ArrayList<>(List.of(name));
+        if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
+            String pathExt = System.getenv().getOrDefault("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+            for (String ext : pathExt.split(";")) candidates.add(name + ext);
+        }
+        for (String dir : pathEnv.split(java.io.File.pathSeparator)) {
+            if (dir.isBlank()) continue;
+            for (String candidate : candidates) {
+                try {
+                    if (Files.isRegularFile(Path.of(dir, candidate))) return true;
+                } catch (RuntimeException ignored) {
+                    // invalid PATH entry
+                }
+            }
+        }
+        return false;
     }
 
     private AuthorizedShellCommand toEntity(AuthorizedShellCommandRequest request) {

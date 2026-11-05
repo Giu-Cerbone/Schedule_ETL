@@ -54,8 +54,28 @@ export interface ApprovedShellScriptRequest {
 }
 
 export interface ShellScriptOption {
+  id: string;
   fileName: string;
   type: string;
+}
+
+export interface RegisteredShellScript {
+  id: string;
+  fileName: string;
+  type: string;
+  path: string;
+}
+
+export interface FileBrowseEntry {
+  name: string;
+  path: string;
+  directory: boolean;
+}
+
+export interface FileBrowseResponse {
+  path: string;
+  parent: string | null;
+  entries: FileBrowseEntry[];
 }
 
 export interface ProcessExecution {
