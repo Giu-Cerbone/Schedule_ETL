@@ -20,6 +20,7 @@ import {
   CreateProfile,
   CreateScheduler,
   ApprovedShellScript,
+  AuthorizedShellCommandRequest,
   AuthorizedShellCommand,
   FileBrowseResponse,
   RegisteredShellScript,
@@ -82,27 +83,26 @@ export class App implements OnInit {
   dialogOpen = false;
   dialogMode: DialogMode = null;
   editingProcessId: number | null = null;
-  shellScriptName = '';
+  shellScriptName: number | null = null;
   shellExecutionMode: 'script' | 'command' = 'script';
-  shellCommandId: string | null = null;
+  shellCommandId: number | null = null;
   adminUsername = '';
   adminPassword = '';
-  editingCommandId: string | null = null;
+  editingCommandId: number | null = null;
   commandEditorOpen = false;
-  commandForm: AuthorizedShellCommand = {
-    id: '',
-    label: '',
+  commandForm: AuthorizedShellCommandRequest = {
+    name: '',
     type: '',
     executable: '',
     arguments: [],
   };
   commandArgumentsText = '';
-  editingScriptName: string | null = null;
+  editingScriptName: number | null = null;
   scriptEditorOpen = false;
-  scriptForm: ApprovedShellScript = { fileName: '', type: '', content: '' };
+  scriptForm: ApprovedShellScript = { name: '', fileName: '', type: '', content: '' };
   registeredScripts: RegisteredShellScript[] = [];
   selectedScriptPath = '';
-  selectedScriptId = '';
+  selectedScriptName = '';
   browserOpen = false;
   browserLoading = false;
   browser: FileBrowseResponse = { path: '', parent: null, entries: [] };
@@ -339,26 +339,39 @@ export class App implements OnInit {
   newApprovedScript(): void {
     this.editingScriptName = null;
     this.scriptEditorOpen = true;
-    this.scriptForm = { fileName: '', type: '', content: '' };
+    this.scriptForm = { name: '', fileName: '', type: '', content: '' };
   }
 
-  async editApprovedScript(fileName: string): Promise<void> {
-    try {
-      this.scriptForm = await firstValueFrom(this.api.getApprovedScript(fileName));
-      this.editingScriptName = fileName;
-      this.scriptEditorOpen = true;
-    } catch (error) {
-      this.reportError(error);
+  async editApprovedScript(id: number): Promise<void> {
+    const script = this.registeredScript(id);
+    if (!script) {
+      this.reportError(new Error('Script autorizzato non trovato nel catalogo.'));
+      return;
     }
+    this.scriptForm = {
+      name: script.name,
+      fileName: script.fileName,
+      type: script.type,
+      content: '',
+    };
+    this.selectedScriptPath = script.path;
+    this.selectedScriptName = script.name;
+    this.editingScriptName = id;
+    this.scriptEditorOpen = true;
   }
 
-  registeredScript(id: string): RegisteredShellScript | undefined {
+  registeredScript(id: number): RegisteredShellScript | undefined {
     return this.registeredScripts.find((script) => script.id === id);
   }
 
   selectBrowserFile(path: string): void {
     this.selectedScriptPath = path;
-    if (!this.selectedScriptId) this.selectedScriptId = path.split(/[\\/]/).pop() ?? '';
+    const fileName = path.split(/[\\/]/).pop() ?? '';
+    if (this.editingScriptName !== null) {
+      this.scriptForm.fileName = fileName;
+    } else if (!this.selectedScriptName) {
+      this.selectedScriptName = fileName;
+    }
   }
 
   async openFileBrowser(): Promise<void> {
@@ -391,23 +404,22 @@ export class App implements OnInit {
     this.editingScriptName = null;
     this.scriptEditorOpen = false;
     this.selectedScriptPath = '';
-    this.selectedScriptId = '';
-    this.scriptForm = { fileName: '', type: '', content: '' };
+    this.selectedScriptName = '';
+    this.scriptForm = { name: '', fileName: '', type: '', content: '' };
   }
 
   async saveApprovedScript(): Promise<void> {
     this.saving = true;
     try {
       if (this.editingScriptName === null) {
-        const id = this.selectedScriptId.trim();
-        if (id && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) {
-          throw new Error('Identificativo non valido: usa solo lettere, numeri, punto, underscore e trattino, senza spazi.');
-        }
-        await firstValueFrom(this.api.registerScript(id, this.selectedScriptPath));
+        if (!this.selectedScriptName.trim()) throw new Error('Inserisci il nome dello script.');
+        await firstValueFrom(this.api.registerScript(this.selectedScriptName.trim(), this.selectedScriptPath));
       } else {
-        await firstValueFrom(this.api.updateApprovedScript(this.editingScriptName, {
+        if (!this.selectedScriptPath) throw new Error('Seleziona il percorso dello script.');
+        await firstValueFrom(this.api.updateRegisteredScriptContent(this.editingScriptName, {
+          name: this.scriptForm.name,
           fileName: this.scriptForm.fileName,
-          content: this.scriptForm.content,
+          path: this.selectedScriptPath,
         }));
       }
       this.cancelScriptEdit();
@@ -420,15 +432,14 @@ export class App implements OnInit {
     }
   }
 
-  async deleteApprovedScript(fileName: string): Promise<void> {
-    if (!window.confirm(`Eliminare lo script autorizzato "${fileName}"?`)) return;
+  async deleteApprovedScript(id: number): Promise<void> {
+    const script = this.shellScripts.find((item) => item.id === id);
+    if (!window.confirm(`Eliminare lo script autorizzato "${script?.name ?? id}"?`)) return;
     try {
-      await firstValueFrom(this.registeredScript(fileName)
-        ? this.api.unregisterScript(fileName)
-        : this.api.deleteApprovedScript(fileName));
-      if (this.editingScriptName === fileName) this.cancelScriptEdit();
+      await firstValueFrom(this.api.unregisterScript(id));
+      if (this.editingScriptName === id) this.cancelScriptEdit();
       await this.refreshShellCatalogs();
-      this.messages.add({ severity: 'success', summary: 'Script eliminato', detail: fileName });
+      this.messages.add({ severity: 'success', summary: 'Script eliminato', detail: script?.name ?? String(id) });
     } catch (error) {
       this.reportError(error);
     }
@@ -437,28 +448,29 @@ export class App implements OnInit {
   newAuthorizedCommand(): void {
     this.editingCommandId = null;
     this.commandEditorOpen = true;
-    this.commandForm = { id: '', label: '', type: '', executable: '', arguments: [] };
+    this.commandForm = { name: '', type: '', executable: '', arguments: [] };
     this.commandArgumentsText = '';
   }
 
   editAuthorizedCommand(command: AuthorizedShellCommand): void {
     this.editingCommandId = command.id;
     this.commandEditorOpen = true;
-    this.commandForm = { ...command, arguments: [...command.arguments] };
+    this.commandForm = { name: command.name, type: command.type, executable: command.executable,
+      arguments: [...command.arguments] };
     this.commandArgumentsText = command.arguments.join('\n');
   }
 
   cancelCommandEdit(): void {
     this.editingCommandId = null;
     this.commandEditorOpen = false;
-    this.commandForm = { id: '', label: '', type: '', executable: '', arguments: [] };
+    this.commandForm = { name: '', type: '', executable: '', arguments: [] };
     this.commandArgumentsText = '';
   }
 
   async saveAuthorizedCommand(): Promise<void> {
     this.saving = true;
     try {
-      const request: AuthorizedShellCommand = {
+      const request: AuthorizedShellCommandRequest = {
         ...this.commandForm,
         arguments: this.commandArgumentsText.split(/\r?\n/).filter((argument) => argument.length > 0),
       };
@@ -478,18 +490,18 @@ export class App implements OnInit {
   }
 
   async deleteAuthorizedCommand(command: AuthorizedShellCommand): Promise<void> {
-    if (!window.confirm(`Eliminare il comando autorizzato "${command.label}"?`)) return;
+    if (!window.confirm(`Eliminare il comando autorizzato "${command.name}"?`)) return;
     try {
       await firstValueFrom(this.api.deleteShellCommand(command.id));
       if (this.editingCommandId === command.id) this.cancelCommandEdit();
       await this.refreshShellCatalogs();
-      this.messages.add({ severity: 'success', summary: 'Comando eliminato', detail: command.label });
+      this.messages.add({ severity: 'success', summary: 'Comando eliminato', detail: command.name });
     } catch (error) {
       this.reportError(error);
     }
   }
 
-  editAuthorizedCommandById(id: string): void {
+  editAuthorizedCommandById(id: number): void {
     const command = this.adminShellCommands.find((item) => item.id === id);
     if (!command) {
       this.reportError(new Error('Il comando autorizzato non è più disponibile. Aggiorna il catalogo.'));
@@ -576,7 +588,7 @@ export class App implements OnInit {
       this.schedulerForm = { name: '', description: '', cronExpression: '0 0 2 * * ?', ownerProfileId: this.profiles[0]?.id ?? null, groupId: null, status: 'ACTIVE' };
     } else if (mode === 'process') {
       this.editingProcessId = null;
-      this.shellScriptName = '';
+      this.shellScriptName = null;
       this.shellExecutionMode = 'script';
       this.shellCommandId = null;
       this.processForm = {
@@ -604,7 +616,7 @@ export class App implements OnInit {
     this.editingProcessId = process.id;
     this.shellScriptName = process.type === 'SHELL_CMD'
       ? this.readApprovedScriptName(process.configuration)
-      : '';
+      : null;
     const configuredCommandId = process.type === 'SHELL_CMD'
       ? this.readApprovedCommandId(process.configuration)
       : null;
@@ -896,37 +908,39 @@ export class App implements OnInit {
       }
       return { ...this.processForm, configuration: JSON.stringify({ commandId: this.shellCommandId }) };
     }
-    const scriptName = this.shellScriptName.trim();
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(scriptName) || scriptName === '.' || scriptName === '..') {
-      throw new Error('Per SHELL_CMD indica il solo nome di uno script approvato, senza percorso.');
-    }
-    if (!this.shellScripts.some((script) => script.id === scriptName)) {
+    const scriptId = this.shellScriptName;
+    if (scriptId === null || !this.shellScripts.some((script) => script.id === scriptId)) {
       throw new Error('Seleziona uno script presente nella directory approvata sul backend.');
     }
-    return { ...this.processForm, configuration: JSON.stringify({ script: scriptName }) };
+    return { ...this.processForm, configuration: JSON.stringify({ script: String(scriptId) }) };
   }
 
-  private readApprovedScriptName(configuration: string | null): string {
-    if (!configuration) return '';
-    try {
-      const parsed: unknown = JSON.parse(configuration);
-      if (typeof parsed === 'object' && parsed !== null && 'script' in parsed
-        && typeof parsed.script === 'string') {
-        return parsed.script;
-      }
-    } catch {
-      return '';
-    }
-    return '';
-  }
-
-  private readApprovedCommandId(configuration: string | null): string | null {
+  private readApprovedScriptName(configuration: string | null): number | null {
     if (!configuration) return null;
     try {
       const parsed: unknown = JSON.parse(configuration);
-      if (typeof parsed === 'object' && parsed !== null && 'commandId' in parsed
-        && typeof parsed.commandId === 'string') {
-        return parsed.commandId;
+      if (typeof parsed === 'object' && parsed !== null && 'script' in parsed) {
+        const script = parsed.script;
+        if (typeof script === 'number' && Number.isInteger(script)) return script;
+        if (typeof script === 'string') {
+          const legacyScript = this.shellScripts.find((item) => item.fileName === script);
+          const id = Number(script);
+          return legacyScript?.id ?? (Number.isInteger(id) && id > 0 ? id : null);
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private readApprovedCommandId(configuration: string | null): number | null {
+    if (!configuration) return null;
+    try {
+      const parsed: unknown = JSON.parse(configuration);
+      if (typeof parsed === 'object' && parsed !== null && 'commandId' in parsed) {
+        const id = Number(parsed.commandId);
+        return Number.isInteger(id) && id > 0 ? id : null;
       }
     } catch {
       return null;
@@ -935,15 +949,15 @@ export class App implements OnInit {
   }
 
   shellTargetDescription(configuration: string | null): string {
-    const scriptName = this.readApprovedScriptName(configuration);
-    if (scriptName) {
-      const scriptType = this.shellScripts.find((script) => script.id === scriptName)?.type;
-      return `Script approvato: ${scriptName}${scriptType ? ` · ${scriptType}` : ''}`;
+    const scriptId = this.readApprovedScriptName(configuration);
+    if (scriptId !== null) {
+      const script = this.shellScripts.find((item) => item.id === scriptId);
+      return script ? `Script approvato: ${script.name} · ${script.type}` : `Script approvato: #${scriptId}`;
     }
     const commandId = this.readApprovedCommandId(configuration);
     const command = this.shellCommands.find((item) => item.id === commandId);
     return command
-      ? `${command.label} · ${command.type}`
+      ? `${command.name} · ${command.type}`
       : commandId ? `Comando autorizzato: ${commandId}` : '—';
   }
 

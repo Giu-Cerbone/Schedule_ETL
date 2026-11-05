@@ -5,6 +5,7 @@ import com.scheduletl.domain.AuthorizedShellCommand;
 import com.scheduletl.domain.RegisteredShellScript;
 import com.scheduletl.repository.AuthorizedShellCommandRepository;
 import com.scheduletl.repository.RegisteredShellScriptRepository;
+import com.scheduletl.repository.RegisteredShellScriptRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -67,7 +68,12 @@ class ShellCommandExecutorTest {
         Files.writeString(approvedDirectory.resolve("ignored.txt"), "not executable\n");
         Files.writeString(approvedDirectory.resolve("approved.cmd"), "@echo off\r\necho no\r\n");
 
-        ShellCatalogService catalog = new ShellCatalogService(mock(AuthorizedShellCommandRepository.class));
+        RegisteredShellScript unixScript = registeredScript(1L, approvedDirectory.resolve("approved.sh"));
+        RegisteredShellScript windowsScript = registeredScript(2L, approvedDirectory.resolve("approved.cmd"));
+        RegisteredShellScriptRepository scriptsRepository = mock(RegisteredShellScriptRepository.class);
+        when(scriptsRepository.findAll()).thenReturn(List.of(unixScript, windowsScript));
+        ShellCatalogService catalog = new ShellCatalogService(mock(AuthorizedShellCommandRepository.class),
+                scriptsRepository);
         ReflectionTestUtils.setField(catalog, "allowedDirectory", approvedDirectory.toString());
         List<com.scheduletl.dto.ShellScriptOptionResponse> scripts = catalog.listScripts();
 
@@ -79,7 +85,8 @@ class ShellCommandExecutorTest {
     @Test
     void createsApprovedScriptsDirectoryWhenListingAnEmptyCatalog() throws IOException {
         Path missingDirectory = approvedDirectory.resolve("not-created-yet");
-        ShellCatalogService catalog = new ShellCatalogService(mock(AuthorizedShellCommandRepository.class));
+        ShellCatalogService catalog = new ShellCatalogService(mock(AuthorizedShellCommandRepository.class),
+                mock(RegisteredShellScriptRepository.class));
         ReflectionTestUtils.setField(catalog, "allowedDirectory", missingDirectory.toString());
 
         assertTrue(catalog.listScripts().isEmpty());
@@ -107,14 +114,15 @@ class ShellCommandExecutorTest {
         Path script = elsewhere.resolve("external.cmd");
         Files.writeString(script, "@echo off\r\necho external\r\nexit /b 0\r\n");
         RegisteredShellScript registered = new RegisteredShellScript();
-        registered.setId("external.cmd");
+        registered.setId(1L);
+        registered.setName("External");
         registered.setPath(script.toString());
         RegisteredShellScriptRepository registry = mock(RegisteredShellScriptRepository.class);
-        when(registry.findById("external.cmd")).thenReturn(Optional.of(registered));
+        when(registry.findById(1L)).thenReturn(Optional.of(registered));
         ShellCommandExecutor executor = new ShellCommandExecutor(new ObjectMapper(), true,
                 approvedDirectory.toString(), 2, mock(AuthorizedShellCommandRepository.class), registry);
 
-        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"script\":\"external.cmd\"}");
+        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"script\":\"1\"}");
 
         assertEquals(0, result.exitCode());
         assertTrue(result.output().contains("external"));
@@ -151,12 +159,12 @@ class ShellCommandExecutorTest {
         assumeFalse(isWindows(), "Unix command integration test");
         Path executable = Path.of("/usr/bin/printf");
         assumeTrue(Files.isRegularFile(executable), "printf is not installed");
-        AuthorizedShellCommand command = authorizedCommand("print-status", "REPORT", executable,
+        AuthorizedShellCommand command = authorizedCommand(1L, "REPORT", executable,
                 List.of("approved command output"));
         AuthorizedShellCommandRepository repository = repositoryFor(command);
         ShellCommandExecutor executor = executor(true, 2, repository);
 
-        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"commandId\":\"print-status\"}");
+        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"commandId\":\"1\"}");
 
         assertEquals(0, result.exitCode());
         assertTrue(result.output().contains("approved command output"));
@@ -169,10 +177,10 @@ class ShellCommandExecutorTest {
         assumeTrue(systemRoot != null, "SystemRoot is not configured");
         Path executable = Path.of(systemRoot, "System32", "hostname.exe");
         assumeTrue(Files.isRegularFile(executable), "hostname.exe is not installed");
-        AuthorizedShellCommand command = authorizedCommand("host-name", "SYSTEM", executable, List.of());
+        AuthorizedShellCommand command = authorizedCommand(1L, "SYSTEM", executable, List.of());
         ShellCommandExecutor executor = executor(true, 2, repositoryFor(command));
 
-        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"commandId\":\"host-name\"}");
+        ShellScriptExecutor.ExecutionResult result = executor.execute("{\"commandId\":1}");
 
         assertEquals(0, result.exitCode());
         assertFalse(result.output().isBlank());
@@ -188,14 +196,22 @@ class ShellCommandExecutorTest {
                 repository, mock(RegisteredShellScriptRepository.class));
     }
 
-    private AuthorizedShellCommand authorizedCommand(String id, String type, Path executable, List<String> arguments) {
+    private AuthorizedShellCommand authorizedCommand(Long id, String type, Path executable, List<String> arguments) {
         AuthorizedShellCommand command = new AuthorizedShellCommand();
         command.setId(id);
-        command.setLabel(id);
+        command.setName("command-" + id);
         command.setType(type);
         command.setExecutable(executable.toString());
         command.setArguments(arguments);
         return command;
+    }
+
+    private RegisteredShellScript registeredScript(Long id, Path path) {
+        RegisteredShellScript script = new RegisteredShellScript();
+        script.setId(id);
+        script.setName(path.getFileName().toString());
+        script.setPath(path.toAbsolutePath().normalize().toString());
+        return script;
     }
 
     private AuthorizedShellCommandRepository repositoryFor(AuthorizedShellCommand command) {

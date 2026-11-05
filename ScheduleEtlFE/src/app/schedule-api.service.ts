@@ -9,6 +9,7 @@ import {
   ApprovedShellScript,
   ApprovedShellScriptRequest,
   AuthorizedShellCommand,
+  AuthorizedShellCommandRequest,
   FileBrowseResponse,
   RegisteredShellScript,
   ProcessDefinition,
@@ -71,16 +72,16 @@ export class ScheduleApiService {
     return this.http.get<AuthorizedShellCommand[]>(`${this.baseUrl}/admin/shell-commands`);
   }
 
-  createShellCommand(command: AuthorizedShellCommand): Observable<AuthorizedShellCommand> {
+  createShellCommand(command: AuthorizedShellCommandRequest): Observable<AuthorizedShellCommand> {
     return this.http.post<AuthorizedShellCommand>(`${this.baseUrl}/admin/shell-commands`, command);
   }
 
-  updateShellCommand(id: string, command: AuthorizedShellCommand): Observable<AuthorizedShellCommand> {
-    return this.http.put<AuthorizedShellCommand>(`${this.baseUrl}/admin/shell-commands/${encodeURIComponent(id)}`, command);
+  updateShellCommand(id: number, command: AuthorizedShellCommandRequest): Observable<AuthorizedShellCommand> {
+    return this.http.put<AuthorizedShellCommand>(`${this.baseUrl}/admin/shell-commands/${id}`, command);
   }
 
-  deleteShellCommand(id: string): Observable<void> {
-    return this.http.delete<void>(`${this.baseUrl}/admin/shell-commands/${encodeURIComponent(id)}`);
+  deleteShellCommand(id: number): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/admin/shell-commands/${id}`);
   }
 
   getApprovedScript(fileName: string): Observable<ApprovedShellScript> {
@@ -112,12 +113,25 @@ export class ScheduleApiService {
     return this.http.get<RegisteredShellScript[]>(`${this.baseUrl}/admin/registered-scripts`);
   }
 
-  registerScript(id: string, path: string): Observable<RegisteredShellScript> {
-    return this.http.post<RegisteredShellScript>(`${this.baseUrl}/admin/registered-scripts`, { id, path });
+  getRegisteredScriptContent(id: number): Observable<ApprovedShellScript> {
+    return this.http.get<ApprovedShellScript>(
+      `${this.baseUrl}/admin/registered-scripts/${id}/content`,
+    );
   }
 
-  unregisterScript(id: string): Observable<void> {
-    return this.http.delete<void>(`${this.baseUrl}/admin/registered-scripts/${encodeURIComponent(id)}`);
+  updateRegisteredScriptContent(id: number, script: ApprovedShellScriptRequest): Observable<ApprovedShellScript> {
+    return this.http.put<ApprovedShellScript>(
+      `${this.baseUrl}/admin/registered-scripts/${id}/content`,
+      script,
+    );
+  }
+
+  registerScript(name: string, path: string): Observable<RegisteredShellScript> {
+    return this.http.post<RegisteredShellScript>(`${this.baseUrl}/admin/registered-scripts`, { name, path });
+  }
+
+  unregisterScript(id: number): Observable<void> {
+    return this.http.delete<void>(`${this.baseUrl}/admin/registered-scripts/${id}`);
   }
 
   createProcess(schedulerId: number, request: CreateProcess): Observable<ProcessDefinition> {

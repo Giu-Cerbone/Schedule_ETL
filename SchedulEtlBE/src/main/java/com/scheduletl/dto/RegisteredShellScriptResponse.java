@@ -1,4 +1,4 @@
 package com.scheduletl.dto;
 
-public record RegisteredShellScriptResponse(String id, String fileName, String type, String path) {
+public record RegisteredShellScriptResponse(Long id, String name, String fileName, String type, String path) {
 }

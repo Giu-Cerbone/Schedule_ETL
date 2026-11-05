@@ -1,6 +1,7 @@
 package com.scheduletl.service;
 
 import com.scheduletl.domain.AuthorizedShellCommand;
+import com.scheduletl.domain.RegisteredShellScript;
 import com.scheduletl.dto.ApprovedShellScriptContentResponse;
 import com.scheduletl.dto.ApprovedShellScriptRequest;
 import com.scheduletl.dto.AuthorizedShellCommandRequest;
@@ -8,6 +9,7 @@ import com.scheduletl.dto.AuthorizedShellCommandResponse;
 import com.scheduletl.dto.ShellCommandOptionResponse;
 import com.scheduletl.dto.ShellScriptOptionResponse;
 import com.scheduletl.repository.AuthorizedShellCommandRepository;
+import com.scheduletl.repository.RegisteredShellScriptRepository;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +38,7 @@ public class ShellCatalogService {
     static final Pattern FILE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(sh|cmd|bat|ps1)");
 
     private final AuthorizedShellCommandRepository commandRepository;
+    private final RegisteredShellScriptRepository scriptRepository;
     @Value("${scheduletl.process.shell.allowed-directory:./approved-scripts}")
     private String allowedDirectory;
 
@@ -43,7 +46,7 @@ public class ShellCatalogService {
     public List<ShellCommandOptionResponse> listCommandOptions() {
         return commandRepository.findAll().stream()
                 .sorted(Comparator.comparing(AuthorizedShellCommand::getId))
-                .map(command -> new ShellCommandOptionResponse(command.getId(), command.getLabel(), command.getType()))
+                .map(command -> new ShellCommandOptionResponse(command.getId(), command.getName(), command.getType()))
                 .toList();
     }
 
@@ -57,25 +60,19 @@ public class ShellCatalogService {
 
     @Transactional
     public AuthorizedShellCommandResponse createCommand(@Valid AuthorizedShellCommandRequest request) {
-        if (commandRepository.existsById(request.id())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "An authorized command with this ID already exists.");
-        }
         return toResponse(commandRepository.save(toEntity(request)));
     }
 
     @Transactional
-    public AuthorizedShellCommandResponse updateCommand(String id, @Valid AuthorizedShellCommandRequest request) {
-        if (!id.equals(request.id())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The command ID cannot be changed.");
-        }
-        if (!commandRepository.existsById(id)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Authorized command not found: " + id);
-        }
-        return toResponse(commandRepository.save(toEntity(request)));
+    public AuthorizedShellCommandResponse updateCommand(Long id, @Valid AuthorizedShellCommandRequest request) {
+        AuthorizedShellCommand command = commandRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Authorized command not found: " + id));
+        applyRequest(command, request);
+        return toResponse(commandRepository.save(command));
     }
 
     @Transactional
-    public void deleteCommand(String id) {
+    public void deleteCommand(Long id) {
         if (!commandRepository.existsById(id)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Authorized command not found: " + id);
         }
@@ -85,15 +82,34 @@ public class ShellCatalogService {
     public List<ShellScriptOptionResponse> listScripts() throws IOException {
         Path root = scriptsDirectory();
         try (Stream<Path> entries = Files.list(root)) {
-            return entries
+            entries
                     .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                    .map(path -> path.getFileName().toString())
-                    .filter(name -> FILE_NAME.matcher(name).matches())
-                    .map(name -> scriptType(name).map(type -> new ShellScriptOptionResponse(name, name, type)).orElse(null))
-                    .filter(java.util.Objects::nonNull)
-                    .sorted(Comparator.comparing(ShellScriptOptionResponse::fileName))
-                    .toList();
+                    .filter(path -> FILE_NAME.matcher(path.getFileName().toString()).matches())
+                    .filter(path -> scriptType(path.getFileName().toString()).isPresent())
+                    .map(path -> {
+                        try {
+                            return path.toRealPath().toString();
+                        } catch (IOException exception) {
+                            throw new java.io.UncheckedIOException(exception);
+                        }
+                    })
+                    .forEach(path -> scriptRepository.findByPath(path).orElseGet(() -> {
+                        RegisteredShellScript script = new RegisteredShellScript();
+                        script.setName(Path.of(path).getFileName().toString());
+                        script.setPath(path);
+                        return scriptRepository.save(script);
+                    }));
         }
+        return scriptRepository.findAll().stream()
+                .map(script -> {
+                    String fileName = Path.of(script.getPath()).getFileName().toString();
+                    return scriptType(fileName)
+                            .map(type -> new ShellScriptOptionResponse(script.getId(), script.getName(), fileName, type))
+                            .orElse(null);
+                })
+                .filter(java.util.Objects::nonNull)
+                .sorted(Comparator.comparing(ShellScriptOptionResponse::id))
+                .toList();
     }
 
     public ApprovedShellScriptContentResponse getScript(String fileName) throws IOException {
@@ -102,7 +118,9 @@ public class ShellCatalogService {
         if (!Files.isRegularFile(script, LinkOption.NOFOLLOW_LINKS)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Approved script not found.");
         }
-        return new ApprovedShellScriptContentResponse(fileName, type, Files.readString(script));
+        String name = scriptRepository.findByPath(script.toRealPath().toString())
+                .map(RegisteredShellScript::getName).orElse(fileName);
+        return new ApprovedShellScriptContentResponse(name, fileName, type, Files.readString(script));
     }
 
     public ApprovedShellScriptContentResponse createScript(@Valid ApprovedShellScriptRequest request) throws IOException {
@@ -112,7 +130,12 @@ public class ShellCatalogService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "An approved script with this name already exists.");
         }
         Files.writeString(script, validateContent(request.content()), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-        return new ApprovedShellScriptContentResponse(request.fileName(), type, request.content());
+        String name = request.name() == null || request.name().isBlank() ? request.fileName() : request.name().trim();
+        RegisteredShellScript record = new RegisteredShellScript();
+        record.setName(name);
+        record.setPath(script.toRealPath().toString());
+        scriptRepository.save(record);
+        return new ApprovedShellScriptContentResponse(name, request.fileName(), type, request.content());
     }
 
     public ApprovedShellScriptContentResponse updateScript(String fileName, @Valid ApprovedShellScriptRequest request)
@@ -137,7 +160,12 @@ public class ShellCatalogService {
         } finally {
             Files.deleteIfExists(temporary);
         }
-        return new ApprovedShellScriptContentResponse(fileName, type, request.content());
+        String name = request.name() == null || request.name().isBlank() ? fileName : request.name().trim();
+        scriptRepository.findByPath(script.toRealPath().toString()).ifPresent(record -> {
+            record.setName(name);
+            scriptRepository.save(record);
+        });
+        return new ApprovedShellScriptContentResponse(name, fileName, type, request.content());
     }
 
     public void deleteScript(String fileName) throws IOException {
@@ -146,7 +174,10 @@ public class ShellCatalogService {
         if (!Files.isRegularFile(script, LinkOption.NOFOLLOW_LINKS)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Approved script not found.");
         }
+        String realPath = script.toRealPath().toString();
         Files.delete(script);
+        scriptRepository.findByPath(realPath).ifPresent(record ->
+                scriptRepository.deleteById(record.getId()));
     }
 
     private Path scriptsDirectory() throws IOException {
@@ -181,14 +212,19 @@ public class ShellCatalogService {
         return java.util.Optional.empty();
     }
 
-    private String validateContent(String content) {
+    static String validateContent(String content) {
         if (content == null || content.isBlank() || content.indexOf('\0') >= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Script content must be non-empty text without NUL characters.");
         }
+
         if (content.length() > 262144) {
             throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "Script content exceeds 256 KiB.");
         }
         return content;
+    }
+
+    boolean isApprovedScriptPath(Path path) throws IOException {
+        return path.toRealPath().getParent().equals(scriptsDirectory().toRealPath());
     }
 
     private AuthorizedShellCommandRequest validateExecutable(AuthorizedShellCommandRequest request) {
@@ -245,10 +281,12 @@ public class ShellCatalogService {
     }
 
     private AuthorizedShellCommand toEntity(AuthorizedShellCommandRequest request) {
+        return applyRequest(new AuthorizedShellCommand(), request);
+    }
+
+    private AuthorizedShellCommand applyRequest(AuthorizedShellCommand command, AuthorizedShellCommandRequest request) {
         validateExecutable(request);
-        AuthorizedShellCommand command = new AuthorizedShellCommand();
-        command.setId(request.id());
-        command.setLabel(request.label().trim());
+        command.setName(request.name().trim());
         command.setType(request.type().trim());
         command.setExecutable(Path.of(request.executable()).normalize().toString());
         command.setArguments(request.arguments() == null ? List.of() : List.copyOf(request.arguments()));
@@ -256,7 +294,7 @@ public class ShellCatalogService {
     }
 
     private AuthorizedShellCommandResponse toResponse(AuthorizedShellCommand command) {
-        return new AuthorizedShellCommandResponse(command.getId(), command.getLabel(), command.getType(),
+        return new AuthorizedShellCommandResponse(command.getId(), command.getName(), command.getType(),
                 command.getExecutable(), command.getArguments());
     }
 }

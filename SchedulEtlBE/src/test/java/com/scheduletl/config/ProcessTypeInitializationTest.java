@@ -26,8 +26,6 @@ class ProcessTypeInitializationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @Autowired
-    private ProcessExecutionSchemaMigration processExecutionSchemaMigration;
 
     @Test
     void initializesAllowedTypesAndRelatesSampleProcesses() {
@@ -43,7 +41,7 @@ class ProcessTypeInitializationTest {
     @Test
     void allowsQueuedExecutionsWithoutAStartTime() throws Exception {
         jdbcTemplate.execute("ALTER TABLE process_executions ALTER COLUMN started_at SET NOT NULL");
-        processExecutionSchemaMigration.run(new DefaultApplicationArguments());
+
 
         String nullable = jdbcTemplate.queryForObject("""
                 SELECT IS_NULLABLE

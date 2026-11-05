@@ -1,4 +1,4 @@
 package com.scheduletl.dto;
 
-public record ShellCommandOptionResponse(String id, String label, String type) {
+public record ShellCommandOptionResponse(Long id, String name, String type) {
 }

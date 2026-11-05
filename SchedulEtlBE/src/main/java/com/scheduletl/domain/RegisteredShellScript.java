@@ -2,6 +2,8 @@ package com.scheduletl.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.Getter;
@@ -15,10 +17,12 @@ import lombok.Setter;
 @NoArgsConstructor
 public class RegisteredShellScript {
 
-    /** Identifier referenced by process configurations; the column keeps its original name for existing databases. */
     @Id
-    @Column(name = "file_name", length = 128)
-    private String id;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, length = 255)
+    private String name;
 
     @Column(nullable = false, unique = true, length = 2048)
     private String path;

@@ -46,17 +46,28 @@ public class AdminShellCatalogController {
         return registeredScriptService.list();
     }
 
+    @GetMapping("/registered-scripts/{id}/content")
+    public ApprovedShellScriptContentResponse getRegisteredScriptContent(@PathVariable Long id) throws IOException {
+        return registeredScriptService.getContent(id);
+    }
+
+    @PutMapping("/registered-scripts/{id}/content")
+    public ApprovedShellScriptContentResponse updateRegisteredScriptContent(
+            @PathVariable Long id, @Valid @RequestBody ApprovedShellScriptRequest request) throws IOException {
+        return registeredScriptService.updateContent(id, request);
+    }
+
     @PostMapping("/registered-scripts")
     @ResponseStatus(HttpStatus.CREATED)
     public RegisteredShellScriptResponse registerScript(@Valid @RequestBody RegisteredShellScriptRequest request)
             throws IOException {
-        return registeredScriptService.register(request.id(), request.path());
+        return registeredScriptService.register(request.name(), request.path());
     }
 
-    @DeleteMapping("/registered-scripts/{fileName}")
+    @DeleteMapping("/registered-scripts/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void unregisterScript(@PathVariable("fileName") String fileName) {
-        registeredScriptService.delete(fileName);
+    public void unregisterScript(@PathVariable Long id) {
+        registeredScriptService.delete(id);
     }
 
     @GetMapping("/shell-commands")
@@ -71,14 +82,14 @@ public class AdminShellCatalogController {
     }
 
     @PutMapping("/shell-commands/{id}")
-    public AuthorizedShellCommandResponse updateCommand(@PathVariable String id,
+    public AuthorizedShellCommandResponse updateCommand(@PathVariable Long id,
                                                          @Valid @RequestBody AuthorizedShellCommandRequest request) {
         return catalogService.updateCommand(id, request);
     }
 
     @DeleteMapping("/shell-commands/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteCommand(@PathVariable String id) {
+    public void deleteCommand(@PathVariable Long id) {
         catalogService.deleteCommand(id);
     }
 

@@ -30,38 +30,45 @@ export interface ProcessType {
 }
 
 export interface ShellCommandOption {
-  id: string;
-  label: string;
+  id: number;
+  name: string;
   type: string;
 }
 
 export interface AuthorizedShellCommand {
-  id: string;
-  label: string;
+  id: number;
+  name: string;
   type: string;
   executable: string;
   arguments: string[];
 }
 
+export type AuthorizedShellCommandRequest = Omit<AuthorizedShellCommand, 'id'>;
+
 export interface ApprovedShellScript {
+  name: string;
   fileName: string;
   type: string;
   content: string;
 }
 
 export interface ApprovedShellScriptRequest {
+  name: string;
   fileName: string;
-  content: string;
+  path?: string;
+  content?: string;
 }
 
 export interface ShellScriptOption {
-  id: string;
+  id: number;
+  name: string;
   fileName: string;
   type: string;
 }
 
 export interface RegisteredShellScript {
-  id: string;
+  id: number;
+  name: string;
   fileName: string;
   type: string;
   path: string;

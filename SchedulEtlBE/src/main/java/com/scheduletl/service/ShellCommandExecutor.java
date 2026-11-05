@@ -56,8 +56,7 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
         Path workingDirectory;
         if (target.has("script")) {
             String scriptName = readScriptName(target);
-            Path registeredPath = registeredScriptRepository.findById(scriptName)
-                    .map(registered -> Path.of(registered.getPath())).orElse(null);
+            Path registeredPath = resolveRegisteredScript(scriptName);
             if (registeredPath != null) {
                 Path realScript = registeredPath.toRealPath();
                 if (!Files.isRegularFile(realScript)) {
@@ -123,7 +122,8 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
         JsonNode root = objectMapper.readTree(configuration);
         if (root == null || !root.isObject() || root.size() != 1
                 || !(root.has("script") || root.has("commandId"))
-                || !(root.has("script") ? root.get("script").isTextual() : root.get("commandId").isTextual())) {
+                || !(root.has("script") ? root.get("script").isTextual()
+                        : root.get("commandId").isIntegralNumber() || root.get("commandId").isTextual())) {
             throw new IllegalArgumentException("Shell process configuration must contain only a script file name or an approved command ID.");
         }
         return root;
@@ -137,13 +137,31 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
         return name;
     }
 
-    private String readCommandId(JsonNode target) {
-        return target.get("commandId").asText();
+    private Long readCommandId(JsonNode target) {
+        try {
+            long id = target.get("commandId").asLong();
+            if (id > 0) return id;
+            throw new NumberFormatException("ID must be positive.");
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("The selected command ID must be numeric.", exception);
+        }
     }
 
-    private AuthorizedShellCommand findConfiguredCommand(String commandId) {
+    private AuthorizedShellCommand findConfiguredCommand(Long commandId) {
         return commandRepository.findById(commandId)
                 .orElseThrow(() -> new IllegalArgumentException("The selected command is not in the server allowlist."));
+    }
+
+    private Path resolveRegisteredScript(String scriptId) throws IOException {
+        try {
+            return registeredScriptRepository.findById(Long.parseLong(scriptId))
+                    .map(registered -> Path.of(registered.getPath())).orElse(null);
+        } catch (NumberFormatException legacyFileName) {
+            return registeredScriptRepository.findAll().stream()
+                    .filter(script -> Path.of(script.getPath()).getFileName().toString().equals(scriptId))
+                    .map(script -> Path.of(script.getPath()))
+                    .findFirst().orElse(null);
+        }
     }
 
     private List<String> buildCommand(Path script) {

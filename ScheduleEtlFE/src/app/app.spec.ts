@@ -6,9 +6,11 @@ import { AdminAuthService } from './admin-auth.service';
 
 describe('App', () => {
   let createdProcessRequest: object | undefined;
+  let registeredScriptUpdate: { id: number; request: object } | undefined;
 
   beforeEach(async () => {
     createdProcessRequest = undefined;
+    registeredScriptUpdate = undefined;
     await TestBed.configureTestingModule({
       imports: [App],
       providers: [{
@@ -17,16 +19,28 @@ describe('App', () => {
           listSchedulers: () => of([]),
           listProfiles: () => of([]),
           listGroups: () => of([]),
+          adminListShellCommands: () => of([]),
+          listRegisteredScripts: () => of([]),
+          getRegisteredScriptContent: () => of({
+            name: 'Daily report',
+            fileName: 'daily-report.sh',
+            type: 'SH',
+            content: 'echo old',
+          }),
+          updateRegisteredScriptContent: (id: number, request: object) => {
+            registeredScriptUpdate = { id, request };
+            return of({});
+          },
           listProcessTypes: () => of([
             { code: 'SQLDATABASE', description: 'Database SQL' },
             { code: 'SHELL_CMD', description: 'Shell command' },
             { code: 'SCRIPT', description: 'Script' },
           ]),
           listShellCommands: () => of([
-            { id: 'print-status', label: 'Print status', type: 'REPORT' },
+            { id: 1, name: 'Print status', type: 'REPORT' },
           ]),
           listShellScripts: () => of([
-            { id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' },
+            { id: 2, name: 'Daily report', fileName: 'daily-report.sh', type: 'SH' },
           ]),
           listProcesses: () => of([]),
           createProcess: (_schedulerId: number, request: object) => {
@@ -63,8 +77,8 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.setView('shell-commands');
-    app.shellCommands = [{ id: 'print-status', label: 'Print status', type: 'REPORT' }];
-    app.shellScripts = [{ id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' }];
+    app.shellCommands = [{ id: 1, name: 'Print status', type: 'REPORT' }];
+    app.shellScripts = [{ id: 2, name: 'Daily report', fileName: 'daily-report.sh', type: 'SH' }];
 
     expect(app.view).toBe('shell-commands');
     expect(app.navigation.some((item) => item.id === 'shell-commands')).toBe(true);
@@ -72,17 +86,64 @@ describe('App', () => {
     expect(app.shellScripts[0].type).toBe('SH');
   });
 
+  it('should edit a registered script through its admin API', async () => {
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.registeredScripts = [{
+      id: 2,
+      name: 'Daily report',
+      fileName: 'daily-report.sh',
+      type: 'SH',
+      path: 'C:\\scripts\\daily-report.sh',
+    }];
+
+    await app.editApprovedScript(2);
+    expect(app.scriptForm.content).toBe('');
+    app.selectBrowserFile('C:\\scripts\\daily-report-renamed.sh');
+
+    await app.saveApprovedScript();
+
+    expect(registeredScriptUpdate).toEqual({
+      id: 2,
+      request: {
+        name: 'Daily report',
+        fileName: 'daily-report-renamed.sh',
+        path: 'C:\\scripts\\daily-report-renamed.sh',
+      },
+    });
+  });
+
+  it('shows the script content field only for process type SCRIPT', () => {
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.dialogOpen = true;
+    app.dialogMode = 'process';
+    app.processForm.type = 'SCRIPT';
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Contenuto script');
+
+    const sqlFixture = TestBed.createComponent(App);
+    const sqlApp = sqlFixture.componentInstance;
+    sqlApp.dialogOpen = true;
+    sqlApp.dialogMode = 'process';
+    sqlApp.processForm.type = 'SQLDATABASE';
+    sqlFixture.detectChanges();
+
+    expect((sqlFixture.nativeElement as HTMLElement).textContent).not.toContain('Contenuto script');
+  });
+
   it('should show the approved script catalog and its detected type for SHELL_CMD', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.processTypes = [{ code: 'SHELL_CMD', description: 'Shell command' }];
-    app.shellScripts = [{ id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' }];
+    app.shellScripts = [{ id: 2, name: 'Daily report', fileName: 'daily-report.sh', type: 'SH' }];
     app.openDialog('process');
     app.processForm.configuration = '{"script":"daily-report.sh"}';
     app.onProcessTypeChange('SHELL_CMD');
     fixture.detectChanges();
 
-    expect(app.shellScriptName).toBe('daily-report.sh');
+    expect(app.shellScriptName).toBe(2);
     expect(app.selectedShellScriptType()).toBe('SH');
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('directory approvata configurata sul backend');
   });
@@ -119,14 +180,14 @@ describe('App', () => {
       sequenceOrder: 0,
       runIfParentFails: false,
     };
-    app.shellScripts = [{ id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' }];
-    app.shellScriptName = 'daily-report.sh';
+    app.shellScripts = [{ id: 2, name: 'Daily report', fileName: 'daily-report.sh', type: 'SH' }];
+    app.shellScriptName = 2;
 
     await app.saveDialog();
 
     expect(createdProcessRequest).toMatchObject({
       type: 'SHELL_CMD',
-      configuration: '{"script":"daily-report.sh"}',
+      configuration: '{"script":"2"}',
     });
   });
 
@@ -170,12 +231,12 @@ describe('App', () => {
     app.selectedSchedulerId = 1;
     app.dialogMode = 'process';
     app.processForm.type = 'SHELL_CMD';
-    app.shellScriptName = '../outside.sh';
+    app.shellScriptName = 999;
 
     await app.saveDialog();
 
     expect(createdProcessRequest).toBeUndefined();
-    expect(app.error).toContain('senza percorso');
+    expect(app.error).toContain('Seleziona uno script');
   });
 
   it('should save a selected server-authorized command by ID, not as shell text', async () => {
@@ -184,15 +245,15 @@ describe('App', () => {
     app.selectedSchedulerId = 1;
     app.dialogMode = 'process';
     app.processForm.type = 'SHELL_CMD';
-    app.shellCommands = [{ id: 'print-status', label: 'Print status', type: 'REPORT' }];
+    app.shellCommands = [{ id: 1, name: 'Print status', type: 'REPORT' }];
     app.shellExecutionMode = 'command';
-    app.shellCommandId = 'print-status';
+    app.shellCommandId = 1;
 
     await app.saveDialog();
 
     expect(createdProcessRequest).toMatchObject({
       type: 'SHELL_CMD',
-      configuration: '{"commandId":"print-status"}',
+      configuration: '{"commandId":1}',
     });
   });
 
