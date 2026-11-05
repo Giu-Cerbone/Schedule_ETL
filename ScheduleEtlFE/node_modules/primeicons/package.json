@@ -1,0 +1,25 @@
+{
+  "name": "primeicons",
+  "version": "8.0.2",
+  "author": "PrimeTek Informatics",
+  "description": "PrimeIcons font icon library",
+  "homepage": "https://primeicons.dev/",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/primefaces/primeicons-nextchapter.git",
+    "directory": "packages/primeicons"
+  },
+  "bugs": {
+    "url": "https://support.primeui.dev"
+  },
+  "main": "primeicons.css",
+  "style": "primeicons.css",
+  "files": [
+    "fonts",
+    "raw-svg",
+    "primeicons.css",
+    "README.md",
+    "LICENSE.md"
+  ]
+}
