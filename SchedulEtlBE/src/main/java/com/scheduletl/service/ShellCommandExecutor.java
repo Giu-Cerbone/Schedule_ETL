@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scheduletl.domain.AuthorizedShellCommand;
 import com.scheduletl.repository.AuthorizedShellCommandRepository;
+import com.scheduletl.repository.RegisteredShellScriptRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -26,16 +27,19 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
     private final boolean enabled;
     private final Duration timeout;
     private final AuthorizedShellCommandRepository commandRepository;
+    private final RegisteredShellScriptRepository registeredScriptRepository;
 
     public ShellCommandExecutor(ObjectMapper objectMapper,
                                 @Value("${scheduletl.process.shell.enabled:false}") boolean enabled,
                                 @Value("${scheduletl.process.shell.allowed-directory:./approved-scripts}") String allowedDirectory,
                                 @Value("${scheduletl.process.shell.timeout-seconds:30}") long timeoutSeconds,
-                                AuthorizedShellCommandRepository commandRepository) {
+                                AuthorizedShellCommandRepository commandRepository,
+                                RegisteredShellScriptRepository registeredScriptRepository) {
         this.objectMapper = objectMapper;
         this.enabled = enabled;
         this.allowedDirectory = Path.of(allowedDirectory).toAbsolutePath().normalize();
         this.commandRepository = commandRepository;
+        this.registeredScriptRepository = registeredScriptRepository;
         if (timeoutSeconds < 1 || timeoutSeconds > 300) {
             throw new IllegalArgumentException("Shell process timeout must be between 1 and 300 seconds");
         }
@@ -53,6 +57,16 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
         Path workingDirectory;
         if (target.has("script")) {
             String scriptName = readScriptName(target);
+            Path registeredPath = registeredScriptRepository.findById(scriptName)
+                    .map(registered -> Path.of(registered.getPath())).orElse(null);
+            if (registeredPath != null) {
+                Path realScript = registeredPath.toRealPath();
+                if (!Files.isRegularFile(realScript)) {
+                    throw new IllegalArgumentException("The registered script is not an available regular file.");
+                }
+                command = buildCommand(realScript);
+                workingDirectory = realScript.getParent();
+            } else {
             Files.createDirectories(allowedDirectory);
             Path root = allowedDirectory.toRealPath();
             if (!Files.isDirectory(root)) {
@@ -69,6 +83,7 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
             }
             command = buildCommand(realScript);
             workingDirectory = root;
+            }
         } else {
             AuthorizedShellCommand definition = findConfiguredCommand(readCommandId(target));
             Path executable = Path.of(definition.getExecutable().trim());

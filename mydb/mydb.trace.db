@@ -195,3 +195,6 @@ Caused by: org.h2.jdbc.JdbcSQLNonTransientConnectionException: The connection wa
 2026-11-05 10:45:41.165401+01:00 jdbc[13]: exception
 org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "SELECT * FROM PROCESS_EXECUTIONS PROCESS_EXECUTIONS [*]AUTHORIZED_SHELL_COMMANDS"; SQL statement:
 SELECT * FROM PROCESS_EXECUTIONS PROCESS_EXECUTIONS AUTHORIZED_SHELL_COMMANDS [42000-224]
+2026-11-05 15:39:35.973213+01:00 jdbc[13]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: Syntax error in SQL statement "truncate [*]tablw REGISTERED_SHELL_SCRIPTS"; expected "TABLE"; SQL statement:
+truncate tablw REGISTERED_SHELL_SCRIPTS [42001-224]

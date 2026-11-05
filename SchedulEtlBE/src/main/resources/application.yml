@@ -46,7 +46,7 @@ scheduletl:
     shell:
       enabled: true
       allowed-directory: ./approved-scripts
-      timeout-seconds: 30
+      timeout-seconds: 180
 
 springdoc:
   api-docs:

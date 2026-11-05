@@ -33,7 +33,7 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class ShellCatalogService {
 
-    private static final Pattern FILE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(sh|cmd|bat|ps1)");
+    static final Pattern FILE_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(sh|cmd|bat|ps1)");
 
     private final AuthorizedShellCommandRepository commandRepository;
     @Value("${scheduletl.process.shell.allowed-directory:./approved-scripts}")
@@ -89,7 +89,7 @@ public class ShellCatalogService {
                     .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     .map(path -> path.getFileName().toString())
                     .filter(name -> FILE_NAME.matcher(name).matches())
-                    .map(name -> scriptType(name).map(type -> new ShellScriptOptionResponse(name, type)).orElse(null))
+                    .map(name -> scriptType(name).map(type -> new ShellScriptOptionResponse(name, name, type)).orElse(null))
                     .filter(java.util.Objects::nonNull)
                     .sorted(Comparator.comparing(ShellScriptOptionResponse::fileName))
                     .toList();
@@ -171,7 +171,7 @@ public class ShellCatalogService {
                 "The script extension is not supported on this backend operating system."));
     }
 
-    private java.util.Optional<String> scriptType(String fileName) {
+    static java.util.Optional<String> scriptType(String fileName) {
         String name = fileName.toLowerCase(Locale.ROOT);
         boolean windows = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win");
         if (!windows && name.endsWith(".sh")) return java.util.Optional.of("SH");

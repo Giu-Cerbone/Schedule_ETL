@@ -162,3 +162,8 @@ code { color: #69738a; font-size: 10px; background: #f5f6fa; padding: 4px 6px; b
   .table-panel .p-datatable-table { min-width: 700px; }
   .config-item { grid-template-columns: 1fr; gap: 8px; }
 }
+
+.script-path { display: block; opacity: .7; word-break: break-all; }
+.file-browser { max-height: 50vh; overflow-y: auto; }
+.file-entry { display: flex; gap: 8px; width: 100%; padding: 7px 10px; border: 0; background: none; cursor: pointer; font: inherit; color: inherit; }
+.file-entry:hover { background: #64748b24; }

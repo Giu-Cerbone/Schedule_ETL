@@ -26,7 +26,7 @@ describe('App', () => {
             { id: 'print-status', label: 'Print status', type: 'REPORT' },
           ]),
           listShellScripts: () => of([
-            { fileName: 'daily-report.sh', type: 'SH' },
+            { id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' },
           ]),
           listProcesses: () => of([]),
           createProcess: (_schedulerId: number, request: object) => {
@@ -64,7 +64,7 @@ describe('App', () => {
     const app = fixture.componentInstance;
     app.setView('shell-commands');
     app.shellCommands = [{ id: 'print-status', label: 'Print status', type: 'REPORT' }];
-    app.shellScripts = [{ fileName: 'daily-report.sh', type: 'SH' }];
+    app.shellScripts = [{ id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' }];
 
     expect(app.view).toBe('shell-commands');
     expect(app.navigation.some((item) => item.id === 'shell-commands')).toBe(true);
@@ -76,7 +76,7 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.processTypes = [{ code: 'SHELL_CMD', description: 'Shell command' }];
-    app.shellScripts = [{ fileName: 'daily-report.sh', type: 'SH' }];
+    app.shellScripts = [{ id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' }];
     app.openDialog('process');
     app.processForm.configuration = '{"script":"daily-report.sh"}';
     app.onProcessTypeChange('SHELL_CMD');
@@ -101,7 +101,7 @@ describe('App', () => {
       parentProcessId: null,
       sequenceOrder: 0,
     };
-    app.shellScripts = [{ fileName: 'daily-report.sh', type: 'SH' }];
+    app.shellScripts = [{ id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' }];
     app.shellScriptName = 'daily-report.sh';
 
     await app.saveDialog();

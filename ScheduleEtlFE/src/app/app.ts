@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit } from '@angular/core';
+import { ChangeDetectorRef, Component, OnInit, inject } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
@@ -21,6 +21,8 @@ import {
   CreateScheduler,
   ApprovedShellScript,
   AuthorizedShellCommand,
+  FileBrowseResponse,
+  RegisteredShellScript,
   ProcessDefinition,
   ProcessExecution,
   ProcessType,
@@ -98,6 +100,12 @@ export class App implements OnInit {
   editingScriptName: string | null = null;
   scriptEditorOpen = false;
   scriptForm: ApprovedShellScript = { fileName: '', type: '', content: '' };
+  registeredScripts: RegisteredShellScript[] = [];
+  selectedScriptPath = '';
+  selectedScriptId = '';
+  browserOpen = false;
+  browserLoading = false;
+  browser: FileBrowseResponse = { path: '', parent: null, entries: [] };
   detailsTitle = '';
   detailsText = '';
 
@@ -301,6 +309,7 @@ export class App implements OnInit {
       ]);
       if (this.adminAuth.authenticated) {
         this.adminShellCommands = await firstValueFrom(this.api.adminListShellCommands());
+        this.registeredScripts = await firstValueFrom(this.api.listRegisteredScripts());
       }
     } catch (error) {
       this.reportError(error);
@@ -321,6 +330,7 @@ export class App implements OnInit {
   logoutAdmin(): void {
     this.adminAuth.logout();
     this.adminShellCommands = [];
+    this.registeredScripts = [];
     this.cancelScriptEdit();
     this.cancelCommandEdit();
   }
@@ -341,9 +351,46 @@ export class App implements OnInit {
     }
   }
 
+  registeredScript(id: string): RegisteredShellScript | undefined {
+    return this.registeredScripts.find((script) => script.id === id);
+  }
+
+  selectBrowserFile(path: string): void {
+    this.selectedScriptPath = path;
+    if (!this.selectedScriptId) this.selectedScriptId = path.split(/[\\/]/).pop() ?? '';
+  }
+
+  async openFileBrowser(): Promise<void> {
+    this.browserOpen = true;
+    await this.browseTo(this.browser.path || this.selectedScriptPath.replace(/[\\/][^\\/]*$/, ''));
+  }
+
+  async browseTo(path: string): Promise<void> {
+    this.browserLoading = true;
+    try {
+      this.browser = await firstValueFrom(this.api.browseServerFiles(path));
+    } catch (error) {
+      this.reportError(error);
+      if (path) await this.browseTo('');
+    } finally {
+      this.browserLoading = false;
+    }
+  }
+
+  async selectBrowserEntry(entry: { path: string; directory: boolean }): Promise<void> {
+    if (entry.directory) {
+      await this.browseTo(entry.path);
+      return;
+    }
+    this.selectBrowserFile(entry.path);
+    this.browserOpen = false;
+  }
+
   cancelScriptEdit(): void {
     this.editingScriptName = null;
     this.scriptEditorOpen = false;
+    this.selectedScriptPath = '';
+    this.selectedScriptId = '';
     this.scriptForm = { fileName: '', type: '', content: '' };
   }
 
@@ -351,10 +398,11 @@ export class App implements OnInit {
     this.saving = true;
     try {
       if (this.editingScriptName === null) {
-        await firstValueFrom(this.api.createApprovedScript({
-          fileName: this.scriptForm.fileName,
-          content: this.scriptForm.content,
-        }));
+        const id = this.selectedScriptId.trim();
+        if (id && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) {
+          throw new Error('Identificativo non valido: usa solo lettere, numeri, punto, underscore e trattino, senza spazi.');
+        }
+        await firstValueFrom(this.api.registerScript(id, this.selectedScriptPath));
       } else {
         await firstValueFrom(this.api.updateApprovedScript(this.editingScriptName, {
           fileName: this.scriptForm.fileName,
@@ -374,7 +422,9 @@ export class App implements OnInit {
   async deleteApprovedScript(fileName: string): Promise<void> {
     if (!window.confirm(`Eliminare lo script autorizzato "${fileName}"?`)) return;
     try {
-      await firstValueFrom(this.api.deleteApprovedScript(fileName));
+      await firstValueFrom(this.registeredScript(fileName)
+        ? this.api.unregisterScript(fileName)
+        : this.api.deleteApprovedScript(fileName));
       if (this.editingScriptName === fileName) this.cancelScriptEdit();
       await this.refreshShellCatalogs();
       this.messages.add({ severity: 'success', summary: 'Script eliminato', detail: fileName });
@@ -489,9 +539,19 @@ export class App implements OnInit {
       resume: () => this.api.resumeProcess(process.schedulerId, process.id),
       stop: () => this.api.stopProcess(process.schedulerId, process.id),
     };
+    if (action === 'start') {
+      // Mostra subito lo stato "In coda" su padre e figli, poi esegue l'avvio.
+      [process.id, ...this.descendantIds(process.id)].forEach((id) => this.pendingStates.set(id, 'QUEUED'));
+      this.changeDetector.detectChanges();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
     try {
       const execution = await firstValueFrom(requests[action]());
-      this.messages.add({ severity: 'success', summary: 'Comando inviato', detail: `${process.name}: ${this.stateLabel(execution.state)}` });
+      const children = this.processes.filter((item) => item.parentProcessId === process.id && item.enabled).length;
+      const detail = action === 'start' && children > 0
+        ? `${process.name}: ${this.stateLabel(execution.state)} · riavviati anche i processi figli`
+        : `${process.name}: ${this.stateLabel(execution.state)}`;
+      this.messages.add({ severity: 'success', summary: 'Comando inviato', detail });
       try {
         await this.loadProcesses();
       } catch (error) {
@@ -499,6 +559,9 @@ export class App implements OnInit {
       }
     } catch (error) {
       this.reportError(error);
+    } finally {
+      this.pendingStates.clear();
+      this.changeDetector.detectChanges();
     }
   }
 
@@ -549,7 +612,7 @@ export class App implements OnInit {
       configuration: process.configuration ?? '',
       enabled: process.enabled,
       parentProcessId: process.parentProcessId,
-      sequenceOrder: process.sequenceOrder,
+      sequenceOrder: process.parentProcessId !== null && process.sequenceOrder < 1 ? 1 : process.sequenceOrder,
     };
   }
 
@@ -565,10 +628,75 @@ export class App implements OnInit {
   addChildProcess(parent: ProcessDefinition): void {
     this.openDialog('process');
     this.processForm.parentProcessId = parent.id;
-    const siblingOrders = this.processes
-      .filter((process) => process.parentProcessId === parent.id)
-      .map((process) => process.sequenceOrder);
-    this.processForm.sequenceOrder = siblingOrders.length ? Math.max(...siblingOrders) + 1 : 0;
+    this.processForm.sequenceOrder = this.nextTreeOrder(parent.id);
+  }
+
+  onParentProcessChange(parentId: number | null): void {
+    this.processForm.parentProcessId = parentId;
+    if (parentId === null) {
+      this.processForm.sequenceOrder = 0;
+    } else if (this.editingProcessId === null || this.processForm.sequenceOrder < 1) {
+      this.processForm.sequenceOrder = this.nextTreeOrder(parentId);
+    }
+  }
+
+  private validateSequenceOrder(): void {
+    const parentId = this.processForm.parentProcessId;
+    if (parentId === null) {
+      this.processForm.sequenceOrder = 0;
+      return;
+    }
+    const order = Number(this.processForm.sequenceOrder);
+    if (!Number.isInteger(order) || order < 1) {
+      throw new Error('L\'ordine di un figlio deve partire da 1: lo 0 è occupato dal padre.');
+    }
+    const rootId = this.rootIdOf(this.processes.find((item) => item.id === parentId)!);
+    const occupied = this.processes.find((item) =>
+      item.id !== this.editingProcessId && item.id !== rootId
+      && this.rootIdOf(item) === rootId && item.sequenceOrder === order);
+    if (occupied) {
+      throw new Error(`L'ordine ${order} è già occupato da "${occupied.name}". Primo ordine libero: ${this.nextFreeOrder(rootId)}.`);
+    }
+  }
+
+  private nextFreeOrder(rootId: number): number {
+    const used = new Set(this.processes
+      .filter((item) => item.id !== this.editingProcessId && item.id !== rootId && this.rootIdOf(item) === rootId)
+      .map((item) => item.sequenceOrder));
+    let order = 1;
+    while (used.has(order)) order += 1;
+    return order;
+  }
+
+  onSequenceOrderChange(value: number | string | null): void {
+    const order = Number(value);
+    const isChild = this.processForm.parentProcessId !== null;
+    this.processForm.sequenceOrder = !Number.isFinite(order) || value === null || value === ''
+      ? (isChild ? 1 : 0)
+      : isChild ? Math.max(1, Math.trunc(order)) : 0;
+  }
+
+  private nextTreeOrder(parentId: number): number {
+    let root = this.processes.find((item) => item.id === parentId);
+    const visited = new Set<number>();
+    while (root && root.parentProcessId !== null && !visited.has(root.id)) {
+      visited.add(root.id);
+      root = this.processes.find((item) => item.id === root!.parentProcessId);
+    }
+    if (!root) return 1;
+    return this.nextFreeOrder(root.id);
+  }
+
+  private rootIdOf(process: ProcessDefinition): number {
+    let current = process;
+    const visited = new Set<number>();
+    while (current.parentProcessId !== null && !visited.has(current.id)) {
+      visited.add(current.id);
+      const parent = this.processes.find((item) => item.id === current.parentProcessId);
+      if (!parent) break;
+      current = parent;
+    }
+    return current.id;
   }
 
   processDepth(process: ProcessDefinition): number {
@@ -600,6 +728,7 @@ export class App implements OnInit {
         }
         case 'process': {
           if (this.selectedSchedulerId === null) throw new Error('Seleziona prima uno scheduler.');
+          this.validateSequenceOrder();
           const processRequest = this.processSaveRequest();
           if (this.editingProcessId === null) {
             await firstValueFrom(this.api.createProcess(this.selectedSchedulerId, processRequest));
@@ -685,7 +814,18 @@ export class App implements OnInit {
   }
 
   latestState(processId: number): string {
-    return this.executions.find((execution) => execution.processDefinitionId === processId)?.state ?? 'CREATED';
+    return this.pendingStates.get(processId)
+      ?? this.executions.find((execution) => execution.processDefinitionId === processId)?.state
+      ?? 'CREATED';
+  }
+
+  private pendingStates = new Map<number, string>();
+  private readonly changeDetector = inject(ChangeDetectorRef);
+
+  private descendantIds(processId: number): number[] {
+    return this.processes
+      .filter((item) => item.parentProcessId === processId && item.enabled)
+      .flatMap((item) => [item.id, ...this.descendantIds(item.id)]);
   }
 
   ownerName(id: number): string {
@@ -753,7 +893,7 @@ export class App implements OnInit {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(scriptName) || scriptName === '.' || scriptName === '..') {
       throw new Error('Per SHELL_CMD indica il solo nome di uno script approvato, senza percorso.');
     }
-    if (!this.shellScripts.some((script) => script.fileName === scriptName)) {
+    if (!this.shellScripts.some((script) => script.id === scriptName)) {
       throw new Error('Seleziona uno script presente nella directory approvata sul backend.');
     }
     return { ...this.processForm, configuration: JSON.stringify({ script: scriptName }) };
@@ -790,7 +930,7 @@ export class App implements OnInit {
   shellTargetDescription(configuration: string | null): string {
     const scriptName = this.readApprovedScriptName(configuration);
     if (scriptName) {
-      const scriptType = this.shellScripts.find((script) => script.fileName === scriptName)?.type;
+      const scriptType = this.shellScripts.find((script) => script.id === scriptName)?.type;
       return `Script approvato: ${scriptName}${scriptType ? ` · ${scriptType}` : ''}`;
     }
     const commandId = this.readApprovedCommandId(configuration);
@@ -801,7 +941,7 @@ export class App implements OnInit {
   }
 
   selectedShellScriptType(): string {
-    return this.shellScripts.find((script) => script.fileName === this.shellScriptName)?.type ?? '—';
+    return this.shellScripts.find((script) => script.id === this.shellScriptName)?.type ?? '—';
   }
 
   selectedShellCommandType(): string {
