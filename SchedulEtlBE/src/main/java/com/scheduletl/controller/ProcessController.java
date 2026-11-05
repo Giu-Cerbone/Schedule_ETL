@@ -45,7 +45,7 @@ public class ProcessController {
     }
 
     @PostMapping("/{schedulerId}/processes/{processDefinitionId}/start")
-    @Operation(summary = "Start a process")
+    @Operation(summary = "Queue a process tree for background execution")
     public ResponseEntity<ProcessExecutionResponse> start(@PathVariable Long schedulerId,
                                                         @PathVariable Long processDefinitionId) {
         return ResponseEntity.ok(processManagementService.startProcess(schedulerId, processDefinitionId));

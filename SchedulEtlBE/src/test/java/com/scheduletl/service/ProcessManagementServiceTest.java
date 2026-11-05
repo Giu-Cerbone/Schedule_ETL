@@ -2,6 +2,7 @@ package com.scheduletl.service;
 
 import com.scheduletl.domain.ProcessDefinition;
 import com.scheduletl.domain.ProcessExecution;
+import com.scheduletl.domain.ProcessState;
 import com.scheduletl.domain.ProcessType;
 import com.scheduletl.domain.Scheduler;
 import com.scheduletl.dto.CreateProcessDefinitionRequest;
@@ -18,13 +19,25 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.Optional;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -44,22 +57,36 @@ class ProcessManagementServiceTest {
     private ShellScriptExecutor shellCommandExecutor;
 
     private ProcessManagementService service;
+    private final ConcurrentHashMap<Long, ProcessDefinition> definitions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, ProcessExecution> processExecutions = new ConcurrentHashMap<>();
+    private final AtomicLong executionIds = new AtomicLong();
 
     @BeforeEach
     void setUp() {
-        service = new ProcessManagementService(mock(SchedulerRepository.class),
-                processDefinitionRepository, processExecutionRepository, processTypeRepository, shellCommandExecutor);
+        service = service(mock(SchedulerRepository.class));
+        processExecutions.clear();
+        executionIds.set(0);
+        lenient().when(processDefinitionRepository.getReferenceById(anyLong()))
+                .thenAnswer(invocation -> definitions.get(invocation.getArgument(0)));
+        lenient().when(processExecutionRepository.findById(anyLong()))
+                .thenAnswer(invocation -> Optional.ofNullable(processExecutions.get(invocation.getArgument(0))));
+        lenient().when(processExecutionRepository.save(any())).thenAnswer(invocation -> {
+            ProcessExecution execution = invocation.getArgument(0);
+            if (execution.getId() == null) {
+                execution.setId(executionIds.incrementAndGet());
+            }
+            processExecutions.put(execution.getId(), execution);
+            return execution;
+        });
     }
 
     @Test
-    void startsEnabledChildrenSequentiallyWhenStartingParent() {
+    void queuesTreeAndStartsEnabledChildrenOnIndependentBranches() {
         Scheduler scheduler = scheduler();
         ProcessDefinition parent = process(1L, scheduler, null, 0, true);
         ProcessDefinition secondChild = process(2L, scheduler, parent, 2, true);
         ProcessDefinition firstChild = process(3L, scheduler, parent, 1, true);
         ProcessDefinition disabledChild = process(4L, scheduler, parent, 3, false);
-        List<Long> executionOrder = new ArrayList<>();
-
         when(processDefinitionRepository.findById(parent.getId())).thenReturn(Optional.of(parent));
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(parent.getId()))
                 .thenReturn(List.of(firstChild, secondChild, disabledChild));
@@ -67,17 +94,168 @@ class ProcessManagementServiceTest {
                 .thenReturn(List.of());
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(secondChild.getId()))
                 .thenReturn(List.of());
-        when(processExecutionRepository.save(any(ProcessExecution.class))).thenAnswer(invocation -> {
-            ProcessExecution execution = invocation.getArgument(0);
-            executionOrder.add(execution.getProcessDefinition().getId());
-            return execution;
-        });
-
         ProcessExecutionResponse response = service.startProcess(scheduler.getId(), parent.getId());
 
         assertEquals(parent.getId(), response.processDefinitionId());
-        assertEquals(List.of(firstChild.getId(), secondChild.getId(),
-                parent.getId(), firstChild.getId(), secondChild.getId()), executionOrder);
+        assertEquals(ProcessState.QUEUED, response.state());
+        assertEquals(Set.of(parent.getId(), firstChild.getId(), secondChild.getId()),
+                processExecutions.values().stream()
+                        .filter(execution -> execution.getState() == ProcessState.RUNNING)
+                        .map(execution -> execution.getProcessDefinition().getId())
+                        .collect(java.util.stream.Collectors.toSet()));
+    }
+
+    @Test
+    void executesIndependentChildBranchesConcurrently() throws Exception {
+        Scheduler scheduler = scheduler();
+        ProcessDefinition parent = process(1L, scheduler, null, 0, true);
+        parent.setType(shellCommandType());
+        parent.setConfiguration("parent");
+        ProcessDefinition firstChild = process(2L, scheduler, parent, 1, true);
+        firstChild.setType(shellCommandType());
+        firstChild.setConfiguration("first");
+        ProcessDefinition secondChild = process(3L, scheduler, parent, 2, true);
+        secondChild.setType(shellCommandType());
+        secondChild.setConfiguration("second");
+        CountDownLatch childrenStarted = new CountDownLatch(2);
+        CountDownLatch allowChildrenToFinish = new CountDownLatch(1);
+        when(processDefinitionRepository.findById(parent.getId())).thenReturn(Optional.of(parent));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(parent.getId()))
+                .thenReturn(List.of(firstChild, secondChild));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(firstChild.getId()))
+                .thenReturn(List.of());
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(secondChild.getId()))
+                .thenReturn(List.of());
+        when(shellCommandExecutor.execute(any())).thenAnswer(invocation -> {
+            String configuration = invocation.getArgument(0);
+            if (!"parent".equals(configuration)) {
+                childrenStarted.countDown();
+                if (!allowChildrenToFinish.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("The child branches did not overlap");
+                }
+            }
+            return new ShellScriptExecutor.ExecutionResult(0, configuration, false);
+        });
+
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            ProcessManagementService parallelService = service(executor, new Semaphore(2, true));
+            ProcessExecutionResponse response = parallelService.startProcess(scheduler.getId(), parent.getId());
+
+            assertEquals(ProcessState.QUEUED, response.state());
+            assertTrue(childrenStarted.await(5, TimeUnit.SECONDS),
+                    "Both independent child processes should run concurrently");
+            allowChildrenToFinish.countDown();
+        } finally {
+            allowChildrenToFinish.countDown();
+        }
+    }
+
+    @Test
+    void executesIndependentSchedulersConcurrently() throws Exception {
+        Scheduler firstScheduler = scheduler();
+        Scheduler secondScheduler = scheduler();
+        secondScheduler.setId(8L);
+        ProcessDefinition first = process(11L, firstScheduler, null, 0, true);
+        ProcessDefinition second = process(12L, secondScheduler, null, 0, true);
+        first.setType(shellCommandType());
+        first.setConfiguration("scheduler-one");
+        second.setType(shellCommandType());
+        second.setConfiguration("scheduler-two");
+        CountDownLatch schedulersStarted = new CountDownLatch(2);
+        CountDownLatch allowSchedulersToFinish = new CountDownLatch(1);
+        when(processDefinitionRepository.findById(first.getId())).thenReturn(Optional.of(first));
+        when(processDefinitionRepository.findById(second.getId())).thenReturn(Optional.of(second));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(first.getId()))
+                .thenReturn(List.of());
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(second.getId()))
+                .thenReturn(List.of());
+        when(shellCommandExecutor.execute(any())).thenAnswer(invocation -> {
+            String configuration = invocation.getArgument(0);
+            schedulersStarted.countDown();
+            if (!allowSchedulersToFinish.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Independent schedulers did not overlap");
+            }
+            return new ShellScriptExecutor.ExecutionResult(0, configuration, false);
+        });
+
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            ProcessManagementService parallelService = service(executor, new Semaphore(2, true));
+
+            assertEquals(ProcessState.QUEUED,
+                    parallelService.startProcess(firstScheduler.getId(), first.getId()).state());
+            assertEquals(ProcessState.QUEUED,
+                    parallelService.startProcess(secondScheduler.getId(), second.getId()).state());
+            assertTrue(schedulersStarted.await(5, TimeUnit.SECONDS),
+                    "Different schedulers should execute concurrently");
+            allowSchedulersToFinish.countDown();
+        } finally {
+            allowSchedulersToFinish.countDown();
+        }
+    }
+
+    @Test
+    void cancelsQueuedTreeWhenExecutionCannotBeDispatched() {
+        Scheduler scheduler = scheduler();
+        ProcessDefinition process = process(1L, scheduler, null, 0, true);
+        when(processDefinitionRepository.findById(process.getId())).thenReturn(Optional.of(process));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(process.getId()))
+                .thenReturn(List.of());
+        Executor rejectingExecutor = task -> {
+            throw new RejectedExecutionException("Executor is shutting down");
+        };
+        ProcessManagementService rejectingService = service(rejectingExecutor, new Semaphore(4, true));
+
+        assertThrows(RejectedExecutionException.class,
+                () -> rejectingService.startProcess(scheduler.getId(), process.getId()));
+
+        assertEquals(ProcessState.CANCELLED, processExecutions.get(1L).getState());
+    }
+
+    @Test
+    void cancelsChildTreeWhenParentFailsByDefault() throws Exception {
+        Scheduler scheduler = scheduler();
+        ProcessDefinition parent = process(1L, scheduler, null, 0, true);
+        parent.setType(shellCommandType());
+        parent.setConfiguration("{\"script\":\"parent.sh\"}");
+        ProcessDefinition child = process(2L, scheduler, parent, 1, true);
+        ProcessDefinition grandchild = process(3L, scheduler, child, 2, true);
+        when(processDefinitionRepository.findById(parent.getId())).thenReturn(Optional.of(parent));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(parent.getId()))
+                .thenReturn(List.of(child));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(child.getId()))
+                .thenReturn(List.of(grandchild));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(grandchild.getId()))
+                .thenReturn(List.of());
+        when(shellCommandExecutor.execute(parent.getConfiguration()))
+                .thenReturn(new ShellScriptExecutor.ExecutionResult(1, "failed", false));
+
+        ProcessExecutionResponse response = service.startProcess(scheduler.getId(), parent.getId());
+
+        assertEquals(ProcessState.QUEUED, response.state());
+        assertEquals(ProcessState.CANCELLED, processExecutions.get(2L).getState());
+        assertEquals(ProcessState.CANCELLED, processExecutions.get(3L).getState());
+    }
+
+    @Test
+    void runsChildWhenConfiguredToContinueAfterParentFailure() throws Exception {
+        Scheduler scheduler = scheduler();
+        ProcessDefinition parent = process(1L, scheduler, null, 0, true);
+        parent.setType(shellCommandType());
+        parent.setConfiguration("{\"script\":\"parent.sh\"}");
+        ProcessDefinition child = process(2L, scheduler, parent, 1, true);
+        child.setRunIfParentFails(true);
+        when(processDefinitionRepository.findById(parent.getId())).thenReturn(Optional.of(parent));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(parent.getId()))
+                .thenReturn(List.of(child));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(child.getId()))
+                .thenReturn(List.of());
+        when(shellCommandExecutor.execute(parent.getConfiguration()))
+                .thenReturn(new ShellScriptExecutor.ExecutionResult(1, "failed", false));
+
+        ProcessExecutionResponse response = service.startProcess(scheduler.getId(), parent.getId());
+
+        assertEquals(ProcessState.QUEUED, response.state());
+        assertEquals(ProcessState.RUNNING, processExecutions.get(2L).getState());
     }
 
     @Test
@@ -92,7 +270,7 @@ class ProcessManagementServiceTest {
         when(processTypeRepository.findById("SQLDATABASE")).thenReturn(Optional.of(processType()));
 
         CreateProcessDefinitionRequest request = new CreateProcessDefinitionRequest(
-                "Updated", "SQLDATABASE", null, null, true, descendant.getId(), 0);
+                "Updated", "SQLDATABASE", null, null, true, descendant.getId(), 0, false);
 
         assertThrows(ResponseStatusException.class,
                 () -> service.updateProcessDefinition(scheduler.getId(), process.getId(), request));
@@ -106,7 +284,7 @@ class ProcessManagementServiceTest {
         when(processTypeRepository.findById("UNKNOWN")).thenReturn(Optional.empty());
 
         CreateProcessDefinitionRequest request = new CreateProcessDefinitionRequest(
-                "Updated", "UNKNOWN", null, null, true, null, 0);
+                "Updated", "UNKNOWN", null, null, true, null, 0, false);
 
         assertThrows(ResponseStatusException.class,
                 () -> service.updateProcessDefinition(scheduler.getId(), process.getId(), request));
@@ -121,16 +299,15 @@ class ProcessManagementServiceTest {
         when(processDefinitionRepository.findById(process.getId())).thenReturn(Optional.of(process));
         when(shellCommandExecutor.execute(process.getConfiguration()))
                 .thenReturn(new ShellScriptExecutor.ExecutionResult(0, "hello from script", false));
-        when(processExecutionRepository.save(any(ProcessExecution.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(process.getId()))
                 .thenReturn(List.of());
 
         ProcessExecutionResponse response = service.startProcess(scheduler.getId(), process.getId());
 
-        assertEquals("hello from script", response.logs());
-        assertEquals(0, response.exitCode());
-        assertEquals(com.scheduletl.domain.ProcessState.COMPLETED, response.state());
+        assertEquals("Queued for execution", response.logs());
+        assertEquals(ProcessState.QUEUED, response.state());
+        assertEquals("hello from script", processExecutions.get(response.id()).getLogs());
+        assertEquals(ProcessState.COMPLETED, processExecutions.get(response.id()).getState());
     }
 
     @Test
@@ -148,7 +325,7 @@ class ProcessManagementServiceTest {
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         ProcessDefinitionResponse response = service.updateProcessDefinition(scheduler.getId(), first.getId(),
-                new CreateProcessDefinitionRequest("Process 2", "SQLDATABASE", null, null, true, root.getId(), 2));
+                new CreateProcessDefinitionRequest("Process 2", "SQLDATABASE", null, null, true, root.getId(), 2, false));
 
         assertEquals(2, response.sequenceOrder());
         assertEquals(1, second.getSequenceOrder());
@@ -165,11 +342,10 @@ class ProcessManagementServiceTest {
         when(processTypeRepository.findById("SQLDATABASE")).thenReturn(Optional.of(processType()));
         SchedulerRepository schedulerRepository = mock(SchedulerRepository.class);
         when(schedulerRepository.findById(scheduler.getId())).thenReturn(Optional.of(scheduler));
-        ProcessManagementService creator = new ProcessManagementService(schedulerRepository,
-                processDefinitionRepository, processExecutionRepository, processTypeRepository, shellCommandExecutor);
+        ProcessManagementService creator = service(schedulerRepository);
 
         assertThrows(ResponseStatusException.class, () -> creator.createProcessDefinition(scheduler.getId(),
-                new CreateProcessDefinitionRequest("New", "SQLDATABASE", null, null, true, root.getId(), 1)));
+                new CreateProcessDefinitionRequest("New", "SQLDATABASE", null, null, true, root.getId(), 1, false)));
     }
 
     private Scheduler scheduler() {
@@ -187,7 +363,23 @@ class ProcessManagementServiceTest {
         process.setEnabled(enabled);
         process.setName("Process " + id);
         process.setType(processType());
+        definitions.put(id, process);
         return process;
+    }
+
+    private ProcessManagementService service(SchedulerRepository schedulerRepository) {
+        return service(schedulerRepository, Runnable::run, new Semaphore(4, true));
+    }
+
+    private ProcessManagementService service(Executor executor, Semaphore semaphore) {
+        return service(mock(SchedulerRepository.class), executor, semaphore);
+    }
+
+    private ProcessManagementService service(SchedulerRepository schedulerRepository, Executor executor,
+                                              Semaphore semaphore) {
+        return new ProcessManagementService(schedulerRepository, processDefinitionRepository,
+                processExecutionRepository, processTypeRepository,
+                new ProcessExecutionWorker(processExecutionRepository, shellCommandExecutor), executor, semaphore);
     }
 
     private ProcessType processType() {

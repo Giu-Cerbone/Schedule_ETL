@@ -9,25 +9,53 @@ import com.scheduletl.repository.ProcessExecutionRepository;
 import com.scheduletl.repository.ProcessTypeRepository;
 import com.scheduletl.repository.SchedulerRepository;
 import jakarta.persistence.EntityNotFoundException;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 
 @Service
-@RequiredArgsConstructor
 public class ProcessManagementService {
 
     private final SchedulerRepository schedulerRepository;
     private final ProcessDefinitionRepository processDefinitionRepository;
     private final ProcessExecutionRepository processExecutionRepository;
     private final ProcessTypeRepository processTypeRepository;
-    private final ShellScriptExecutor shellCommandExecutor;
+    private final ProcessExecutionWorker processExecutionWorker;
+    private final Executor processExecutionExecutor;
+    private final Semaphore processExecutionSemaphore;
+    private final Set<Long> activeProcessDefinitions = ConcurrentHashMap.newKeySet();
+    private final Object activeProcessLock = new Object();
+
+    public ProcessManagementService(SchedulerRepository schedulerRepository,
+                                    ProcessDefinitionRepository processDefinitionRepository,
+                                    ProcessExecutionRepository processExecutionRepository,
+                                    ProcessTypeRepository processTypeRepository,
+                                    ProcessExecutionWorker processExecutionWorker,
+                                    @Qualifier("processExecutionExecutor") Executor processExecutionExecutor,
+                                    Semaphore processExecutionSemaphore) {
+        this.schedulerRepository = schedulerRepository;
+        this.processDefinitionRepository = processDefinitionRepository;
+        this.processExecutionRepository = processExecutionRepository;
+        this.processTypeRepository = processTypeRepository;
+        this.processExecutionWorker = processExecutionWorker;
+        this.processExecutionExecutor = processExecutionExecutor;
+        this.processExecutionSemaphore = processExecutionSemaphore;
+    }
 
     @Transactional(readOnly = true)
     public List<ProcessDefinitionResponse> getProcessDefinitions(Long schedulerId) {
@@ -49,6 +77,7 @@ public class ProcessManagementService {
         definition.setConfiguration(request.configuration());
         definition.setEnabled(request.enabled());
         definition.setParentProcess(findParentProcess(schedulerId, null, request.parentProcessId()));
+        definition.setRunIfParentFails(definition.getParentProcess() != null && request.runIfParentFails());
         definition.setSequenceOrder(newSequenceOrder(schedulerId, definition.getParentProcess(), request.sequenceOrder()));
 
         ProcessDefinition saved = processDefinitionRepository.save(definition);
@@ -68,6 +97,7 @@ public class ProcessManagementService {
         definition.setConfiguration(request.configuration());
         definition.setEnabled(request.enabled());
         definition.setParentProcess(newParent);
+        definition.setRunIfParentFails(newParent != null && request.runIfParentFails());
         return toDefinitionResponse(processDefinitionRepository.save(definition));
     }
 
@@ -177,20 +207,154 @@ public class ProcessManagementService {
     @Transactional
     public ProcessExecutionResponse startProcess(Long schedulerId, Long processDefinitionId) {
         ProcessDefinition definition = findProcessDefinition(schedulerId, processDefinitionId);
-        queueDescendants(definition);
-        return executeTreeCommand(definition, ProcessCommand.START, ProcessState.RUNNING, "Process started successfully");
+        ProcessNode processTree = snapshotTree(definition);
+        List<Long> claimedIds = processTree.definitionIds();
+        synchronized (activeProcessLock) {
+            if (claimedIds.stream().anyMatch(activeProcessDefinitions::contains)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "This process or one of its descendants is already queued or running");
+            }
+            activeProcessDefinitions.addAll(claimedIds);
+        }
+
+        try {
+            QueuedProcessNode queuedTree = queueTree(processTree, definition.getScheduler(), "Queued for execution");
+            ProcessExecutionResponse response = new ProcessExecutionResponse(
+                    queuedTree.executionId(), schedulerId, processDefinitionId, ProcessState.QUEUED,
+                    null, null, null, "Queued for execution", "Queued for execution");
+            dispatchAfterCommit(() -> {
+                try {
+                    executeTree(queuedTree);
+                } finally {
+                    claimedIds.forEach(activeProcessDefinitions::remove);
+                }
+            }, () -> {
+                try {
+                    cancelTree(queuedTree, "Execution was not started because the worker is unavailable");
+                } finally {
+                    claimedIds.forEach(activeProcessDefinitions::remove);
+                }
+            });
+            return response;
+        } catch (RuntimeException exception) {
+            claimedIds.forEach(activeProcessDefinitions::remove);
+            throw exception;
+        }
     }
 
-    /** Resets every enabled descendant to QUEUED so a (re)start never leaves a stale previous state on the children. */
-    private void queueDescendants(ProcessDefinition parent) {
-        for (ProcessDefinition child : processDefinitionRepository
-                .findByParentProcessIdOrderBySequenceOrderAscIdAsc(parent.getId())) {
-            if (child.isEnabled()) {
-                executeCommand(child, ProcessCommand.RESTART, ProcessState.QUEUED,
-                        "Queued for restart of parent process " + parent.getId());
-                queueDescendants(child);
+    private ProcessNode snapshotTree(ProcessDefinition definition) {
+        List<ProcessNode> children = processDefinitionRepository
+                .findByParentProcessIdOrderBySequenceOrderAscIdAsc(definition.getId()).stream()
+                .filter(ProcessDefinition::isEnabled)
+                .map(this::snapshotTree)
+                .toList();
+        return new ProcessNode(definition.getId(), definition.getType().getCode(), definition.getConfiguration(),
+                definition.isRunIfParentFails(), children);
+    }
+
+    private QueuedProcessNode queueTree(ProcessNode node, Scheduler scheduler, String message) {
+        ProcessDefinition definition = processDefinitionRepository.getReferenceById(node.definitionId());
+        ProcessExecution execution = new ProcessExecution();
+        execution.setScheduler(scheduler);
+        execution.setProcessDefinition(definition);
+        execution.setState(ProcessState.QUEUED);
+        execution.setStatusMessage(message);
+        execution.setLogs(message);
+        execution.setStartedAt(null);
+        execution.setExitCode(null);
+        ProcessExecution queued = processExecutionRepository.save(execution);
+        List<QueuedProcessNode> children = node.children().stream()
+                .map(child -> queueTree(child, scheduler, "Queued after parent process " + node.definitionId()))
+                .toList();
+        return new QueuedProcessNode(node, queued.getId(), children);
+    }
+
+    private void dispatchAfterCommit(Runnable task, Runnable onRejected) {
+        Runnable dispatch = () -> {
+            try {
+                processExecutionExecutor.execute(task);
+            } catch (RejectedExecutionException exception) {
+                try {
+                    onRejected.run();
+                } catch (RuntimeException cleanupException) {
+                    exception.addSuppressed(cleanupException);
+                }
+                throw exception;
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    dispatch.run();
+                }
+            });
+        } else {
+            dispatch.run();
+        }
+    }
+
+    private void executeTree(QueuedProcessNode node) {
+        processExecutionWorker.markRunning(node.executionId());
+        ProcessExecutionWorker.Outcome outcome;
+        boolean permitAcquired = false;
+        try {
+            if ("SHELL_CMD".equals(node.process().type())) {
+                processExecutionSemaphore.acquire();
+                permitAcquired = true;
+            }
+            outcome = processExecutionWorker.execute(node.process().type(), node.process().configuration());
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            outcome = new ProcessExecutionWorker.Outcome(ProcessState.FAILED, -1,
+                    "Process execution was interrupted", "Process execution was interrupted before completion.");
+        } finally {
+            if (permitAcquired) {
+                processExecutionSemaphore.release();
             }
         }
+        processExecutionWorker.complete(node.executionId(), outcome);
+
+        List<QueuedProcessNode> runnableChildren = new ArrayList<>();
+        for (QueuedProcessNode child : node.children()) {
+            if (outcome.state() == ProcessState.FAILED && !child.process().runIfParentFails()) {
+                cancelTree(child, "Skipped because parent process " + node.process().definitionId() + " failed");
+            } else {
+                runnableChildren.add(child);
+            }
+        }
+        if (runnableChildren.size() == 1) {
+            executeTree(runnableChildren.getFirst());
+        } else if (!runnableChildren.isEmpty()) {
+            CompletableFuture<?>[] tasks = runnableChildren.stream()
+                    .map(child -> CompletableFuture.runAsync(() -> executeTree(child), processExecutionExecutor))
+                    .toArray(CompletableFuture[]::new);
+            try {
+                CompletableFuture.allOf(tasks).join();
+            } catch (CompletionException exception) {
+                throw new IllegalStateException("A child process branch failed unexpectedly", exception.getCause());
+            }
+        }
+    }
+
+    private void cancelTree(QueuedProcessNode node, String reason) {
+        processExecutionWorker.cancelQueued(node.executionId(), reason);
+        for (QueuedProcessNode child : node.children()) {
+            cancelTree(child, "Skipped because an ancestor process failed");
+        }
+    }
+
+    private record ProcessNode(Long definitionId, String type, String configuration, boolean runIfParentFails,
+                               List<ProcessNode> children) {
+        private List<Long> definitionIds() {
+            List<Long> ids = new ArrayList<>();
+            ids.add(definitionId);
+            children.forEach(child -> ids.addAll(child.definitionIds()));
+            return ids;
+        }
+    }
+
+    private record QueuedProcessNode(ProcessNode process, Long executionId, List<QueuedProcessNode> children) {
     }
 
     @Transactional
@@ -278,35 +442,7 @@ public class ProcessManagementService {
         execution.setStatusMessage(statusMessage);
         execution.setLogs("Command: " + command + " | status: " + statusMessage + " | at: " + LocalDateTime.now());
         execution.setStartedAt(LocalDateTime.now());
-        execution.setExitCode(0);
-
-        if (command == ProcessCommand.START && "SHELL_CMD".equals(definition.getType().getCode())) {
-            try {
-                ShellScriptExecutor.ExecutionResult result = shellCommandExecutor.execute(definition.getConfiguration());
-                execution.setLogs(result.output());
-                execution.setExitCode(result.exitCode());
-                execution.setState(result.exitCode() == 0 ? ProcessState.COMPLETED : ProcessState.FAILED);
-                execution.setStatusMessage(result.timedOut()
-                        ? "Script execution timed out"
-                        : result.exitCode() == 0 ? "Script completed successfully" : "Script failed");
-            } catch (IOException exception) {
-                execution.setState(ProcessState.FAILED);
-                execution.setExitCode(-1);
-                execution.setStatusMessage("Unable to execute the approved script");
-                execution.setLogs("I/O error while starting or reading the approved script.");
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                execution.setState(ProcessState.FAILED);
-                execution.setExitCode(-1);
-                execution.setStatusMessage("Script execution was interrupted");
-                execution.setLogs("Script execution was interrupted before completion.");
-            } catch (IllegalArgumentException | IllegalStateException exception) {
-                execution.setState(ProcessState.FAILED);
-                execution.setExitCode(-1);
-                execution.setStatusMessage("Script execution was rejected");
-                execution.setLogs(exception.getMessage());
-            }
-        }
+        execution.setExitCode(command == ProcessCommand.CANCEL ? null : 0);
 
         execution.setFinishedAt(LocalDateTime.now());
         ProcessExecution saved = processExecutionRepository.save(execution);
@@ -324,6 +460,7 @@ public class ProcessManagementService {
                 processDefinition.getScheduler() != null ? processDefinition.getScheduler().getId() : null,
                 processDefinition.getParentProcess() != null ? processDefinition.getParentProcess().getId() : null,
                 processDefinition.getSequenceOrder(),
+                processDefinition.isRunIfParentFails(),
                 processDefinition.getCreatedAt()
         );
     }

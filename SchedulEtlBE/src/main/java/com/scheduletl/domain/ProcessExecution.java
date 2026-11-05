@@ -32,7 +32,7 @@ public class ProcessExecution {
     @Column(nullable = false)
     private ProcessState state = ProcessState.CREATED;
 
-    @Column(nullable = false)
+    @Column
     private LocalDateTime startedAt;
 
     @Column
@@ -49,7 +49,7 @@ public class ProcessExecution {
 
     @PrePersist
     protected void onCreate() {
-        if (startedAt == null) {
+        if (startedAt == null && state != ProcessState.QUEUED && state != ProcessState.CANCELLED) {
             startedAt = LocalDateTime.now();
         }
     }

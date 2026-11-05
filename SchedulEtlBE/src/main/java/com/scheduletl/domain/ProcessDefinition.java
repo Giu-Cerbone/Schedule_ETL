@@ -38,6 +38,9 @@ public class ProcessDefinition {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean runIfParentFails;
+
     @Column(nullable = false)
     private int sequenceOrder;
 

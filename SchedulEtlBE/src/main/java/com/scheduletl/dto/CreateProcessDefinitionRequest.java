@@ -10,6 +10,7 @@ public record CreateProcessDefinitionRequest(
         String configuration,
         boolean enabled,
         Long parentProcessId,
-        @PositiveOrZero(message = "Sequence order must be zero or greater") Integer sequenceOrder
+        @PositiveOrZero(message = "Sequence order must be zero or greater") Integer sequenceOrder,
+        boolean runIfParentFails
 ) {
 }

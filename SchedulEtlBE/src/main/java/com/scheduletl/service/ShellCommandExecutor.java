@@ -9,7 +9,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.file.LinkOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -47,7 +46,7 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
     }
 
     @Override
-    public synchronized ShellScriptExecutor.ExecutionResult execute(String configuration) throws IOException, InterruptedException {
+    public ShellScriptExecutor.ExecutionResult execute(String configuration) throws IOException, InterruptedException {
         if (!enabled) {
             throw new IllegalStateException("Shell execution is disabled. Enable scheduletl.process.shell.enabled to use approved scripts.");
         }

@@ -12,6 +12,7 @@ public record ProcessDefinitionResponse(
         Long schedulerId,
         Long parentProcessId,
         int sequenceOrder,
+        boolean runIfParentFails,
         LocalDateTime createdAt
 ) {
 }

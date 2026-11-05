@@ -43,6 +43,7 @@ scheduletl:
     username: ${SCHEDULETL_ADMIN_USERNAME:admin}
     password: ${SCHEDULETL_ADMIN_PASSWORD:admin}
   process:
+    max-concurrent: 4
     shell:
       enabled: true
       allowed-directory: ./approved-scripts
