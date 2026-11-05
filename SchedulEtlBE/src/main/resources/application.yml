@@ -44,7 +44,7 @@ scheduletl:
     password: ${SCHEDULETL_ADMIN_PASSWORD:admin}
   process:
     shell:
-      enabled: false
+      enabled: true
       allowed-directory: ./approved-scripts
       timeout-seconds: 30
 
