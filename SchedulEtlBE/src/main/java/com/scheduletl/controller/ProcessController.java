@@ -28,7 +28,7 @@ public class ProcessController {
         return ResponseEntity.ok(processManagementService.getProcessDefinitions(schedulerId));
     }
 
-    @PostMapping("/{schedulerId}/processes")
+    @PostMapping("/{schedulerId}/av")
     @Operation(summary = "Create a process definition under a scheduler")
     public ResponseEntity<ProcessDefinitionResponse> createProcess(@PathVariable Long schedulerId,
                                                                  @Valid @RequestBody CreateProcessDefinitionRequest request) {
