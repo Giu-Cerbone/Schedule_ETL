@@ -87,6 +87,23 @@ describe('App', () => {
     expect((fixture.nativeElement as HTMLElement).textContent).toContain('directory approvata configurata sul backend');
   });
 
+  it('should show the continue-after-failure option only for child processes', () => {
+    const rootFixture = TestBed.createComponent(App);
+    rootFixture.componentInstance.openDialog('process');
+    rootFixture.detectChanges();
+
+    const rootOptions = Array.from((rootFixture.nativeElement as HTMLElement).querySelectorAll('.checkbox-label'));
+    expect(rootOptions.some((label) => label.textContent?.includes('Esegui comunque se il processo padre fallisce'))).toBe(false);
+
+    const childFixture = TestBed.createComponent(App);
+    childFixture.componentInstance.openDialog('process');
+    childFixture.componentInstance.processForm.parentProcessId = 1;
+    childFixture.detectChanges();
+
+    const childOptions = Array.from((childFixture.nativeElement as HTMLElement).querySelectorAll('.checkbox-label'));
+    expect(childOptions.some((label) => label.textContent?.includes('Esegui comunque se il processo padre fallisce'))).toBe(true);
+  });
+
   it('should submit SHELL_CMD as an approved script filename configuration', async () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
@@ -100,6 +117,7 @@ describe('App', () => {
       enabled: true,
       parentProcessId: null,
       sequenceOrder: 0,
+      runIfParentFails: false,
     };
     app.shellScripts = [{ id: 'daily-report.sh', fileName: 'daily-report.sh', type: 'SH' }];
     app.shellScriptName = 'daily-report.sh';
@@ -110,6 +128,40 @@ describe('App', () => {
       type: 'SHELL_CMD',
       configuration: '{"script":"daily-report.sh"}',
     });
+  });
+
+  it('should submit the child setting to run after parent failure', async () => {
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.selectedSchedulerId = 1;
+    app.dialogMode = 'process';
+    app.processForm = {
+      name: 'Child',
+      type: 'SQLDATABASE',
+      description: '',
+      configuration: '{}',
+      enabled: true,
+      parentProcessId: 1,
+      sequenceOrder: 1,
+      runIfParentFails: true,
+    };
+    app.processes = [{
+      id: 1,
+      name: 'Parent',
+      type: 'SQLDATABASE',
+      description: null,
+      configuration: null,
+      enabled: true,
+      schedulerId: 1,
+      parentProcessId: null,
+      sequenceOrder: 0,
+      runIfParentFails: false,
+      createdAt: '2026-01-01T00:00:00',
+    }];
+
+    await app.saveDialog();
+
+    expect(createdProcessRequest).toMatchObject({ runIfParentFails: true });
   });
 
   it('should reject a path instead of an approved script filename', async () => {
@@ -158,6 +210,7 @@ describe('App', () => {
       schedulerId: 1,
       parentProcessId: null,
       sequenceOrder: 0,
+      runIfParentFails: false,
       createdAt: '2026-01-01T00:00:00',
     };
     app.processDetailExecutions = [{

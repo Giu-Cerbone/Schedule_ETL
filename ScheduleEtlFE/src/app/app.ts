@@ -125,6 +125,7 @@ export class App implements OnInit {
     enabled: true,
     parentProcessId: null,
     sequenceOrder: 0,
+    runIfParentFails: false,
   };
   profileForm: CreateProfile = { username: '', fullName: '', email: '' };
   groupForm: CreateGroup = { name: '', description: '' };
@@ -547,11 +548,14 @@ export class App implements OnInit {
     }
     try {
       const execution = await firstValueFrom(requests[action]());
-      const children = this.processes.filter((item) => item.parentProcessId === process.id && item.enabled).length;
-      const detail = action === 'start' && children > 0
-        ? `${process.name}: ${this.stateLabel(execution.state)} · riavviati anche i processi figli`
+      const detail = action === 'start'
+        ? `${process.name}: esecuzione accodata in background. I processi indipendenti possono procedere in parallelo.`
         : `${process.name}: ${this.stateLabel(execution.state)}`;
-      this.messages.add({ severity: 'success', summary: 'Comando inviato', detail });
+      this.messages.add({
+        severity: 'success',
+        summary: action === 'start' ? 'Esecuzione accodata' : 'Comando inviato',
+        detail,
+      });
       try {
         await this.loadProcesses();
       } catch (error) {
@@ -583,6 +587,7 @@ export class App implements OnInit {
         enabled: true,
         parentProcessId: null,
         sequenceOrder: 0,
+        runIfParentFails: false,
       };
     } else if (mode === 'profile') {
       this.profileForm = { username: '', fullName: '', email: '' };
@@ -613,6 +618,7 @@ export class App implements OnInit {
       enabled: process.enabled,
       parentProcessId: process.parentProcessId,
       sequenceOrder: process.parentProcessId !== null && process.sequenceOrder < 1 ? 1 : process.sequenceOrder,
+      runIfParentFails: process.runIfParentFails,
     };
   }
 
@@ -635,6 +641,7 @@ export class App implements OnInit {
     this.processForm.parentProcessId = parentId;
     if (parentId === null) {
       this.processForm.sequenceOrder = 0;
+      this.processForm.runIfParentFails = false;
     } else if (this.editingProcessId === null || this.processForm.sequenceOrder < 1) {
       this.processForm.sequenceOrder = this.nextTreeOrder(parentId);
     }

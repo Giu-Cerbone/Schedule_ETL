@@ -20,6 +20,7 @@ export interface ProcessDefinition {
   schedulerId: number;
   parentProcessId: number | null;
   sequenceOrder: number;
+  runIfParentFails: boolean;
   createdAt: string;
 }
 
@@ -120,6 +121,7 @@ export interface CreateProcess {
   enabled: boolean;
   parentProcessId: number | null;
   sequenceOrder: number;
+  runIfParentFails: boolean;
 }
 
 export interface CreateProfile {
