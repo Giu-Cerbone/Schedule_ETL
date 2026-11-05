@@ -39,7 +39,7 @@
       @if (error) {
         <div class="error-banner"><i class="pi pi-exclamation-triangle"></i><span>{{ error }}</span><button (click)="error = ''" aria-label="Chiudi"><i class="pi pi-times"></i></button></div>
       }
-      @if (loading) {
+      @if (loading && view !== 'overview') {
         <div class="loading-state"><i class="pi pi-spin pi-spinner"></i><span>Caricamento dati dal backend...</span></div>
       } @else {
         @switch (view) {

@@ -271,35 +271,64 @@ export class App implements OnInit {
         firstValueFrom(this.api.listProfiles()),
         firstValueFrom(this.api.listGroups()),
       ]);
-      this.processTypes = await firstValueFrom(this.api.listProcessTypes());
-      [this.shellCommands, this.shellScripts] = await Promise.all([
-        firstValueFrom(this.api.listShellCommands()),
-        firstValueFrom(this.api.listShellScripts()),
-      ]);
       this.schedulers = schedulers;
       this.profiles = profiles;
       this.groups = groups;
       if (!this.schedulers.some((item) => item.id === this.selectedSchedulerId)) {
         this.selectedSchedulerId = this.schedulers[0]?.id ?? null;
       }
-      await this.loadProcesses();
+      await this.loadProcesses(false);
     } catch (error) {
       this.reportError(error);
     } finally {
       this.loading = false;
+      this.changeDetector.markForCheck();
+    }
+    void this.loadSupportingData();
+  }
+
+  async loadProcesses(waitForHistory = true): Promise<void> {
+    if (this.selectedSchedulerId === null) {
+      this.processes = [];
+      this.executions = [];
+      this.changeDetector.markForCheck();
+      return;
+    }
+    const schedulerId = this.selectedSchedulerId;
+    this.processes = await firstValueFrom(this.api.listProcesses(schedulerId));
+    this.executions = [];
+    this.changeDetector.markForCheck();
+    if (waitForHistory) {
+      await this.loadProcessHistory(schedulerId, this.processes);
+    } else {
+      void this.loadProcessHistory(schedulerId, this.processes).catch((error: unknown) => this.reportError(error));
     }
   }
 
-  async loadProcesses(): Promise<void> {
-    if (this.selectedSchedulerId === null) {
-      this.processes = [];
-      return;
-    }
-    this.processes = await firstValueFrom(this.api.listProcesses(this.selectedSchedulerId));
+  private async loadProcessHistory(schedulerId: number, processes: ProcessDefinition[]): Promise<void> {
     const histories = await Promise.all(
-      this.processes.map((process) => firstValueFrom(this.api.processHistory(process.schedulerId, process.id))),
+      processes.map((process) => firstValueFrom(this.api.processHistory(process.schedulerId, process.id))),
     );
-    this.executions = histories.flat().sort((left, right) => right.id - left.id);
+    if (this.selectedSchedulerId === schedulerId
+      && this.processes.map((process) => process.id).join(',') === processes.map((process) => process.id).join(',')) {
+      this.executions = histories.flat().sort((left, right) => right.id - left.id);
+      this.changeDetector.markForCheck();
+    }
+  }
+
+  private async loadSupportingData(): Promise<void> {
+    try {
+      const [processTypes, shellCommands, shellScripts] = await Promise.all([
+        firstValueFrom(this.api.listProcessTypes()),
+        firstValueFrom(this.api.listShellCommands()),
+        firstValueFrom(this.api.listShellScripts()),
+      ]);
+      this.processTypes = processTypes;
+      this.shellCommands = shellCommands;
+      this.shellScripts = shellScripts;
+    } catch (error) {
+      this.reportError(error);
+    }
   }
 
   async refreshShellCatalogs(): Promise<void> {
@@ -513,7 +542,7 @@ export class App implements OnInit {
   async chooseScheduler(id: number): Promise<void> {
     this.selectedSchedulerId = id;
     try {
-      await this.loadProcesses();
+      await this.loadProcesses(false);
     } catch (error) {
       this.reportError(error);
     }

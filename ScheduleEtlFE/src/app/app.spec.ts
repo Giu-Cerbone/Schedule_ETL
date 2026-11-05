@@ -1,22 +1,29 @@
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { NEVER, Observable, of } from 'rxjs';
 import { App } from './app';
 import { ScheduleApiService } from './schedule-api.service';
 import { AdminAuthService } from './admin-auth.service';
+import { ProcessDefinition, ProcessExecution, Scheduler } from './api.models';
 
 describe('App', () => {
   let createdProcessRequest: object | undefined;
   let registeredScriptUpdate: { id: number; request: object } | undefined;
+  let schedulersResponse: Scheduler[];
+  let processesResponse: ProcessDefinition[];
+  let processHistoryResponse: Observable<ProcessExecution[]>;
 
   beforeEach(async () => {
     createdProcessRequest = undefined;
     registeredScriptUpdate = undefined;
+    schedulersResponse = [];
+    processesResponse = [];
+    processHistoryResponse = of([]);
     await TestBed.configureTestingModule({
       imports: [App],
       providers: [{
         provide: ScheduleApiService,
         useValue: {
-          listSchedulers: () => of([]),
+          listSchedulers: () => of(schedulersResponse),
           listProfiles: () => of([]),
           listGroups: () => of([]),
           adminListShellCommands: () => of([]),
@@ -42,7 +49,8 @@ describe('App', () => {
           listShellScripts: () => of([
             { id: 2, name: 'Daily report', fileName: 'daily-report.sh', type: 'SH' },
           ]),
-          listProcesses: () => of([]),
+          listProcesses: () => of(processesResponse),
+          processHistory: () => processHistoryResponse,
           createProcess: (_schedulerId: number, request: object) => {
             createdProcessRequest = request;
             return of({});
@@ -71,6 +79,51 @@ describe('App', () => {
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
     expect(compiled.querySelector('.brand')?.textContent).toContain('SchedulETL');
+  });
+
+  it('keeps the dashboard visible while backend data is loading', () => {
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    fixture.componentInstance.loading = true;
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(compiled.querySelector('.activity-panel')).not.toBeNull();
+    expect(compiled.querySelector('.loading-state')).toBeNull();
+  });
+
+  it('shows the dashboard without waiting for process history', async () => {
+    schedulersResponse = [{
+      id: 1,
+      name: 'Daily',
+      description: null,
+      cronExpression: '0 0 2 * * ?',
+      status: 'ACTIVE',
+      ownerProfileId: 1,
+      groupId: null,
+      createdAt: '2026-01-01T00:00:00',
+      updatedAt: '2026-01-01T00:00:00',
+    }];
+    processesResponse = [{
+      id: 1,
+      name: 'Report',
+      type: 'SCRIPT',
+      description: null,
+      configuration: null,
+      enabled: true,
+      schedulerId: 1,
+      parentProcessId: null,
+      sequenceOrder: 0,
+      runIfParentFails: false,
+      createdAt: '2026-01-01T00:00:00',
+    }];
+    processHistoryResponse = NEVER;
+    const app = TestBed.createComponent(App).componentInstance;
+
+    await app.refresh();
+
+    expect(app.loading).toBe(false);
+    expect(app.processes).toHaveLength(1);
   });
 
   it('should provide a menu page for authorized commands and approved scripts', async () => {
