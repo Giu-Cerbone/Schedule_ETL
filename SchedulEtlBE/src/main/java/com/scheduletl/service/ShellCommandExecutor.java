@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 @Component
@@ -47,6 +48,12 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
 
     @Override
     public ShellScriptExecutor.ExecutionResult execute(String configuration) throws IOException, InterruptedException {
+        return execute(configuration, ignored -> {});
+    }
+
+    @Override
+    public ShellScriptExecutor.ExecutionResult execute(String configuration, Consumer<String> outputListener)
+            throws IOException, InterruptedException {
         if (!enabled) {
             throw new IllegalStateException("Shell execution is disabled. Enable scheduletl.process.shell.enabled to use approved scripts.");
         }
@@ -110,7 +117,7 @@ public class ShellCommandExecutor implements ShellScriptExecutor {
             workingDirectory = allowedDirectory.toAbsolutePath().normalize();
         }
 
-        ApprovedScriptRunnable task = new ApprovedScriptRunnable(command, workingDirectory, timeout);
+        ApprovedScriptRunnable task = new ApprovedScriptRunnable(command, workingDirectory, timeout, outputListener);
         task.run();
         return task.result();
     }

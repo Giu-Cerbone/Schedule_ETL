@@ -15,6 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.time.Duration;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -141,6 +143,26 @@ class ShellCommandExecutorTest {
     }
 
     @Test
+    void stopsOnlyTheFailedRunnableDescendants() throws IOException, InterruptedException {
+        assumeFalse(isWindows(), "Unix shell integration test");
+        Path pidFile = approvedDirectory.resolve("child.pid");
+        Files.writeString(approvedDirectory.resolve("failed-with-child.sh"),
+                "sleep 30 &\necho $! > \"" + pidFile + "\"\nsleep 0.3\nexit 1\n");
+
+        ShellScriptExecutor.ExecutionResult result =
+                executor(true, 3).execute("{\"script\":\"failed-with-child.sh\"}");
+
+        assertEquals(1, result.exitCode());
+        long childPid = Long.parseLong(Files.readString(pidFile).trim());
+        ProcessHandle child = ProcessHandle.of(childPid).orElseThrow();
+        long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+        while (child.isAlive() && System.nanoTime() < deadline) {
+            Thread.sleep(25);
+        }
+        assertFalse(child.isAlive(), "The failed runnable's child process should be terminated");
+    }
+
+    @Test
     void runnableCanOnlyBeStartedOnce() throws IOException, InterruptedException {
         assumeFalse(isWindows(), "Unix shell integration test");
         Files.writeString(approvedDirectory.resolve("single-run.sh"), "printf 'ran'\n");
@@ -152,6 +174,22 @@ class ShellCommandExecutorTest {
 
         assertTrue(task.result().output().contains("ran"));
         assertThrows(IllegalStateException.class, task::run);
+    }
+
+    @Test
+    void streamsOutputWhileTheApprovedScriptIsStillRunning() throws IOException, InterruptedException {
+        assumeFalse(isWindows(), "Unix shell integration test");
+        Files.writeString(approvedDirectory.resolve("streaming.sh"),
+                "printf 'first line\\n'\nsleep 1\nprintf 'second line\\n'\n");
+        List<String> updates = new CopyOnWriteArrayList<>();
+
+        ShellScriptExecutor.ExecutionResult result =
+                executor(true, 3).execute("{\"script\":\"streaming.sh\"}", updates::add);
+
+        assertTrue(updates.stream().anyMatch(update -> update.contains("first line")
+                && !update.contains("second line")));
+        assertTrue(result.output().contains("first line"));
+        assertTrue(result.output().contains("second line"));
     }
 
     @Test

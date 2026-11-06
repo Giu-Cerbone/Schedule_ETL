@@ -37,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -106,6 +107,39 @@ class ProcessManagementServiceTest {
     }
 
     @Test
+    void childFailureDoesNotChangeParentOrSiblingExecutionStates() throws Exception {
+        Scheduler scheduler = scheduler();
+        ProcessDefinition parent = process(1L, scheduler, null, 0, true);
+        parent.setType(shellCommandType());
+        parent.setConfiguration("parent");
+        ProcessDefinition failingChild = process(2L, scheduler, parent, 1, true);
+        failingChild.setType(shellCommandType());
+        failingChild.setConfiguration("failing-child");
+        ProcessDefinition sibling = process(3L, scheduler, parent, 2, true);
+        sibling.setType(shellCommandType());
+        sibling.setConfiguration("sibling");
+
+        when(processDefinitionRepository.findById(parent.getId())).thenReturn(Optional.of(parent));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(parent.getId()))
+                        .thenReturn(List.of(failingChild, sibling));
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(failingChild.getId()))
+                        .thenReturn(List.of());
+        when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(sibling.getId()))
+                        .thenReturn(List.of());
+        when(shellCommandExecutor.execute(any(), any())).thenAnswer(invocation -> {
+            String configuration = invocation.getArgument(0);
+            return new ShellScriptExecutor.ExecutionResult(
+                            "failing-child".equals(configuration) ? 1 : 0, configuration, false);
+        });
+
+        service.startProcess(scheduler.getId(), parent.getId());
+
+        assertEquals(ProcessState.COMPLETED, processExecutions.get(1L).getState());
+        assertEquals(ProcessState.FAILED, processExecutions.get(2L).getState());
+        assertEquals(ProcessState.COMPLETED, processExecutions.get(3L).getState());
+    }
+
+    @Test
     void executesIndependentChildBranchesConcurrently() throws Exception {
         Scheduler scheduler = scheduler();
         ProcessDefinition parent = process(1L, scheduler, null, 0, true);
@@ -126,7 +160,7 @@ class ProcessManagementServiceTest {
                 .thenReturn(List.of());
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(secondChild.getId()))
                 .thenReturn(List.of());
-        when(shellCommandExecutor.execute(any())).thenAnswer(invocation -> {
+        when(shellCommandExecutor.execute(any(), any())).thenAnswer(invocation -> {
             String configuration = invocation.getArgument(0);
             if (!"parent".equals(configuration)) {
                 childrenStarted.countDown();
@@ -169,7 +203,7 @@ class ProcessManagementServiceTest {
                 .thenReturn(List.of());
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(second.getId()))
                 .thenReturn(List.of());
-        when(shellCommandExecutor.execute(any())).thenAnswer(invocation -> {
+        when(shellCommandExecutor.execute(any(), any())).thenAnswer(invocation -> {
             String configuration = invocation.getArgument(0);
             schedulersStarted.countDown();
             if (!allowSchedulersToFinish.await(5, TimeUnit.SECONDS)) {
@@ -226,7 +260,7 @@ class ProcessManagementServiceTest {
                 .thenReturn(List.of(grandchild));
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(grandchild.getId()))
                 .thenReturn(List.of());
-        when(shellCommandExecutor.execute(parent.getConfiguration()))
+        when(shellCommandExecutor.execute(eq(parent.getConfiguration()), any()))
                 .thenReturn(new ShellScriptExecutor.ExecutionResult(1, "failed", false));
 
         ProcessExecutionResponse response = service.startProcess(scheduler.getId(), parent.getId());
@@ -249,7 +283,7 @@ class ProcessManagementServiceTest {
                 .thenReturn(List.of(child));
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(child.getId()))
                 .thenReturn(List.of());
-        when(shellCommandExecutor.execute(parent.getConfiguration()))
+        when(shellCommandExecutor.execute(eq(parent.getConfiguration()), any()))
                 .thenReturn(new ShellScriptExecutor.ExecutionResult(1, "failed", false));
 
         ProcessExecutionResponse response = service.startProcess(scheduler.getId(), parent.getId());
@@ -297,7 +331,7 @@ class ProcessManagementServiceTest {
         process.setType(shellCommandType());
         process.setConfiguration("{\"script\":\"approved.sh\"}");
         when(processDefinitionRepository.findById(process.getId())).thenReturn(Optional.of(process));
-        when(shellCommandExecutor.execute(process.getConfiguration()))
+        when(shellCommandExecutor.execute(eq(process.getConfiguration()), any()))
                 .thenReturn(new ShellScriptExecutor.ExecutionResult(0, "hello from script", false));
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(process.getId()))
                 .thenReturn(List.of());

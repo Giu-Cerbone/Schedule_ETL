@@ -44,7 +44,7 @@ public class ProcessExecution {
     @Column(length = 4000)
     private String statusMessage;
 
-    @Column(length = 8000)
+    @Column(length = 120000)
     private String logs;
 
     @PrePersist

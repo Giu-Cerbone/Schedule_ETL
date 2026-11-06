@@ -303,7 +303,8 @@ public class ProcessManagementService {
                 processExecutionSemaphore.acquire();
                 permitAcquired = true;
             }
-            outcome = processExecutionWorker.execute(node.process().type(), node.process().configuration());
+            outcome = processExecutionWorker.execute(node.process().type(), node.process().configuration(),
+                    logs -> processExecutionWorker.updateLogs(node.executionId(), logs));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             outcome = new ProcessExecutionWorker.Outcome(ProcessState.FAILED, -1,

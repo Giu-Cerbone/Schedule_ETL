@@ -8,26 +8,36 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 final class ApprovedScriptRunnable implements Runnable {
 
-    private static final int MAX_OUTPUT_CHARACTERS = 7_500;
+    private static final int MAX_OUTPUT_CHARACTERS = 120000;
 
     private final List<String> command;
     private final Path workingDirectory;
     private final Duration timeout;
+    private final Consumer<String> outputListener;
     private volatile ShellScriptExecutor.ExecutionResult result;
     private volatile Exception failure;
     private boolean started;
 
-    ApprovedScriptRunnable(List<String> command, Path workingDirectory, Duration timeout) {
+    ApprovedScriptRunnable(List<String> command, Path workingDirectory, Duration timeout,
+                           Consumer<String> outputListener) {
         this.command = List.copyOf(command);
         this.workingDirectory = workingDirectory;
         this.timeout = timeout;
+        this.outputListener = outputListener;
+    }
+
+    ApprovedScriptRunnable(List<String> command, Path workingDirectory, Duration timeout) {
+        this(command, workingDirectory, timeout, ignored -> {});
     }
 
     @Override
@@ -51,6 +61,25 @@ final class ApprovedScriptRunnable implements Runnable {
 
         CompletableFuture<CapturedOutput> outputFuture =
                 CompletableFuture.supplyAsync(() -> readOutput(process.getInputStream()));
+        outputFuture.whenComplete((output, readFailure) -> {
+            if (readFailure != null) {
+                terminateAfterInterruption(process);
+            }
+        });
+        AtomicBoolean monitorDescendants = new AtomicBoolean(true);
+        ConcurrentHashMap<Long, ProcessHandle> descendants = new ConcurrentHashMap<>();
+        CompletableFuture<Void> descendantMonitor = CompletableFuture.runAsync(() -> {
+            while (monitorDescendants.get() && process.isAlive()) {
+                process.toHandle().descendants()
+                        .forEach(descendant -> descendants.put(descendant.pid(), descendant));
+                try {
+                    Thread.sleep(25);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        });
         boolean finished;
         try {
             finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -62,6 +91,18 @@ final class ApprovedScriptRunnable implements Runnable {
             Thread.currentThread().interrupt();
             failure = exception;
             return;
+        } finally {
+            monitorDescendants.set(false);
+        }
+
+        try {
+            descendantMonitor.get(1, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            failure = exception;
+            return;
+        } catch (ExecutionException | TimeoutException exception) {
+            descendantMonitor.cancel(true);
         }
 
         CapturedOutput output;
@@ -88,7 +129,11 @@ final class ApprovedScriptRunnable implements Runnable {
         if (!finished) {
             text += System.lineSeparator() + "[Execution timed out after " + timeout.toSeconds() + " seconds]";
         }
-        result = new ShellScriptExecutor.ExecutionResult(finished ? process.exitValue() : -1, text, !finished);
+        int exitCode = finished ? process.exitValue() : -1;
+        if (exitCode != 0) {
+            terminateDescendants(descendants.values().stream().toList());
+        }
+        result = new ShellScriptExecutor.ExecutionResult(exitCode, text, !finished);
     }
 
     ShellScriptExecutor.ExecutionResult result() throws IOException, InterruptedException {
@@ -110,6 +155,7 @@ final class ApprovedScriptRunnable implements Runnable {
     private CapturedOutput readOutput(InputStream input) {
         StringBuilder output = new StringBuilder();
         boolean truncated = false;
+        long lastPublishedAt = System.nanoTime();
         try (Reader reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
             char[] buffer = new char[1024];
             int count;
@@ -125,10 +171,16 @@ final class ApprovedScriptRunnable implements Runnable {
                 } else {
                     truncated = true;
                 }
+                long now = System.nanoTime();
+                if (now - lastPublishedAt >= TimeUnit.MILLISECONDS.toNanos(250)) {
+                    outputListener.accept(output.toString());
+                    lastPublishedAt = now;
+                }
             }
         } catch (IOException exception) {
             return new CapturedOutput(output + System.lineSeparator() + "[Unable to read process output]", true);
         }
+        outputListener.accept(output.toString());
         return new CapturedOutput(output.toString(), truncated);
     }
 
@@ -144,6 +196,10 @@ final class ApprovedScriptRunnable implements Runnable {
     private void terminateAfterInterruption(Process process) {
         process.toHandle().descendants().forEach(ProcessHandle::destroyForcibly);
         process.destroyForcibly();
+    }
+
+    private void terminateDescendants(List<ProcessHandle> descendants) {
+        descendants.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
     }
 
     private void configureEnvironment(java.util.Map<String, String> environment) {

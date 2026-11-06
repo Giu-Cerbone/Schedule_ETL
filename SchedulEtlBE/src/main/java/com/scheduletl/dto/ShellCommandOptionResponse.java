@@ -1,4 +1,6 @@
 package com.scheduletl.dto;
 
-public record ShellCommandOptionResponse(Long id, String name, String type) {
+import java.util.List;
+
+public record ShellCommandOptionResponse(Long id, String name, String type, String executable, List<String> arguments) {
 }

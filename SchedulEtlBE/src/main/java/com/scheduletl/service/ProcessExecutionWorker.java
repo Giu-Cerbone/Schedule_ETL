@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.function.Consumer;
 
 @Service
 @RequiredArgsConstructor
@@ -29,12 +30,16 @@ public class ProcessExecutionWorker {
     }
 
     public Outcome execute(String processType, String configuration) {
+        return execute(processType, configuration, ignored -> {});
+    }
+
+    public Outcome execute(String processType, String configuration, Consumer<String> outputListener) {
         if (!"SHELL_CMD".equals(processType)) {
             return new Outcome(ProcessState.RUNNING, null, "Process started successfully",
                     "No execution adapter is configured for process type " + processType);
         }
         try {
-            ShellScriptExecutor.ExecutionResult result = shellScriptExecutor.execute(configuration);
+            ShellScriptExecutor.ExecutionResult result = shellScriptExecutor.execute(configuration, outputListener);
             return new Outcome(result.exitCode() == 0 ? ProcessState.COMPLETED : ProcessState.FAILED,
                     result.exitCode(),
                     result.timedOut() ? "Script execution timed out"
@@ -50,6 +55,13 @@ public class ProcessExecutionWorker {
         } catch (IllegalArgumentException | IllegalStateException exception) {
             return new Outcome(ProcessState.FAILED, -1, "Script execution was rejected", exception.getMessage());
         }
+    }
+
+    @Transactional
+    public void updateLogs(Long executionId, String logs) {
+        ProcessExecution execution = findExecution(executionId);
+        execution.setLogs(logs);
+        processExecutionRepository.save(execution);
     }
 
     @Transactional

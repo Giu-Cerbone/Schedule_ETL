@@ -46,7 +46,8 @@ public class ShellCatalogService {
     public List<ShellCommandOptionResponse> listCommandOptions() {
         return commandRepository.findAll().stream()
                 .sorted(Comparator.comparing(AuthorizedShellCommand::getId))
-                .map(command -> new ShellCommandOptionResponse(command.getId(), command.getName(), command.getType()))
+                .map(command -> new ShellCommandOptionResponse(command.getId(), command.getName(), command.getType(),
+                        command.getExecutable(), command.getArguments()))
                 .toList();
     }
 
