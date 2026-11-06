@@ -4,6 +4,7 @@ import { App } from './app';
 import { ScheduleApiService } from './schedule-api.service';
 import { AdminAuthService } from './admin-auth.service';
 import { ProcessDefinition, ProcessExecution, Scheduler } from './api.models';
+import { vi } from 'vitest';
 
 describe('App', () => {
   let createdProcessRequest: object | undefined;
@@ -44,7 +45,7 @@ describe('App', () => {
             { code: 'SCRIPT', description: 'Script' },
           ]),
           listShellCommands: () => of([
-            { id: 1, name: 'Print status', type: 'REPORT' },
+            { id: 1, name: 'Print status', type: 'REPORT', executable: 'echo', arguments: ['status'] },
           ]),
           listShellScripts: () => of([
             { id: 2, name: 'Daily report', fileName: 'daily-report.sh', type: 'SH' },
@@ -130,7 +131,7 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
     app.setView('shell-commands');
-    app.shellCommands = [{ id: 1, name: 'Print status', type: 'REPORT' }];
+    app.shellCommands = [{ id: 1, name: 'Print status', type: 'REPORT', executable: 'echo', arguments: ['status'] }];
     app.shellScripts = [{ id: 2, name: 'Daily report', fileName: 'daily-report.sh', type: 'SH' }];
 
     expect(app.view).toBe('shell-commands');
@@ -298,7 +299,7 @@ describe('App', () => {
     app.selectedSchedulerId = 1;
     app.dialogMode = 'process';
     app.processForm.type = 'SHELL_CMD';
-    app.shellCommands = [{ id: 1, name: 'Print status', type: 'REPORT' }];
+    app.shellCommands = [{ id: 1, name: 'Print status', type: 'REPORT', executable: 'echo', arguments: ['status'] }];
     app.shellExecutionMode = 'command';
     app.shellCommandId = 1;
 
@@ -308,6 +309,95 @@ describe('App', () => {
       type: 'SHELL_CMD',
       configuration: '{"commandId":1}',
     });
+  });
+
+  it('should display an executable or script filename in every process row', async () => {
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const app = fixture.componentInstance;
+    app.view = 'processes';
+    app.loading = false;
+    app.selectedSchedulerId = 1;
+    app.shellCommands = [{ id: 1, name: 'Print status', type: 'REPORT', executable: 'echo', arguments: ['status'] }];
+    app.shellScripts = [{ id: 2, name: 'Daily report', fileName: 'daily-report.sh', type: 'SH' }];
+    app.processes = [
+      {
+        id: 1,
+        name: 'Command process',
+        type: 'SHELL_CMD',
+        description: null,
+        configuration: '{"commandId":1}',
+        enabled: true,
+        schedulerId: 1,
+        parentProcessId: null,
+        sequenceOrder: 0,
+        runIfParentFails: false,
+        createdAt: '2026-01-01T00:00:00',
+      },
+      {
+        id: 2,
+        name: 'Child script process',
+        type: 'SHELL_CMD',
+        description: null,
+        configuration: '{"script":"2"}',
+        enabled: true,
+        schedulerId: 1,
+        parentProcessId: 1,
+        sequenceOrder: 1,
+        runIfParentFails: false,
+        createdAt: '2026-01-01T00:00:00',
+      },
+    ];
+    fixture.detectChanges();
+
+    const rows = (fixture.nativeElement as HTMLElement).querySelectorAll('.table-panel tbody tr');
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.querySelectorAll('td')).toHaveLength(8);
+    expect(rows[0].querySelector('td:nth-child(3)')?.textContent).toContain('echo');
+    expect(rows[1].querySelector('td:nth-child(3)')?.textContent).toContain('daily-report.sh');
+  });
+
+  it('should show a failed process as stopped without changing its parent or sibling states', () => {
+    const app = TestBed.createComponent(App).componentInstance;
+    app.executions = [
+      { id: 8, schedulerId: 1, processDefinitionId: 3, state: 'RUNNING', startedAt: null, finishedAt: null, exitCode: null, statusMessage: null, logs: null },
+      { id: 7, schedulerId: 1, processDefinitionId: 2, state: 'FAILED', startedAt: null, finishedAt: null, exitCode: 1, statusMessage: null, logs: null },
+      { id: 6, schedulerId: 1, processDefinitionId: 1, state: 'COMPLETED', startedAt: null, finishedAt: null, exitCode: 0, statusMessage: null, logs: null },
+    ];
+
+    expect(app.latestState(1)).toBe('COMPLETED');
+    expect(app.latestState(2)).toBe('FAILED');
+    expect(app.stateLabel(app.latestState(2))).toBe('Fallito (fermato)');
+    expect(app.latestState(3)).toBe('RUNNING');
+  });
+
+  it('should show whether each child runs when its parent fails', async () => {
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const app = fixture.componentInstance;
+    app.view = 'processes';
+    app.loading = false;
+    app.selectedSchedulerId = 1;
+    app.processes = [
+      {
+        id: 1, name: 'Parent', type: 'SCRIPT', description: null, configuration: null,
+        enabled: true, schedulerId: 1, parentProcessId: null, sequenceOrder: 0,
+        runIfParentFails: false, createdAt: '2026-01-01T00:00:00',
+      },
+      {
+        id: 2, name: 'Child', type: 'SCRIPT', description: null, configuration: null,
+        enabled: true, schedulerId: 1, parentProcessId: 1, sequenceOrder: 1,
+        runIfParentFails: true, createdAt: '2026-01-01T00:00:00',
+      },
+    ];
+    fixture.detectChanges();
+
+    const table = fixture.nativeElement as HTMLElement;
+    expect(table.querySelector('th:nth-child(4)')?.textContent).toContain('Continua Se Padre Fallisce');
+    expect(table.querySelectorAll('tbody tr')[0].querySelector('td:nth-child(4)')?.textContent?.trim()).toBe('—');
+    expect(table.querySelectorAll('tbody tr')[1].querySelector('td:nth-child(4)')?.textContent?.trim()).toBe('Sì');
   });
 
   it('should display shell execution output in the process detail console', () => {
@@ -342,5 +432,88 @@ describe('App', () => {
 
     expect((fixture.nativeElement as HTMLElement).querySelector('.console-output')?.textContent)
       .toContain('report generated');
+  });
+
+  it('should refresh a running process console until its execution completes', async () => {
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const app = fixture.componentInstance;
+    const process: ProcessDefinition = {
+      id: 1,
+      name: 'Report',
+      type: 'SHELL_CMD',
+      description: null,
+      configuration: '{"script":"daily-report.sh"}',
+      enabled: true,
+      schedulerId: 1,
+      parentProcessId: null,
+      sequenceOrder: 0,
+      runIfParentFails: false,
+      createdAt: '2026-01-01T00:00:00',
+    };
+    const runningExecution: ProcessExecution = {
+      id: 2,
+      schedulerId: 1,
+      processDefinitionId: 1,
+      state: 'RUNNING',
+      startedAt: '2026-01-01T00:00:00',
+      finishedAt: null,
+      exitCode: null,
+      statusMessage: null,
+      logs: 'first line',
+    };
+    processHistoryResponse = of([runningExecution]);
+    vi.useFakeTimers();
+    try {
+      await app.openProcessDetails(process);
+      processHistoryResponse = of([{ ...runningExecution, state: 'COMPLETED', logs: 'first line\nsecond line' }]);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(app.processDetailExecutions[0].logs).toContain('second line');
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('should not poll a terminal execution detail again', async () => {
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const app = fixture.componentInstance;
+    const process: ProcessDefinition = {
+      id: 1,
+      name: 'Report',
+      type: 'SHELL_CMD',
+      description: null,
+      configuration: '{"script":"daily-report.sh"}',
+      enabled: true,
+      schedulerId: 1,
+      parentProcessId: null,
+      sequenceOrder: 0,
+      runIfParentFails: false,
+      createdAt: '2026-01-01T00:00:00',
+    };
+    const api = TestBed.inject(ScheduleApiService);
+    const historyRequest = vi.spyOn(api, 'processHistory').mockReturnValue(of([{
+      id: 3,
+      schedulerId: 1,
+      processDefinitionId: 1,
+      state: 'FAILED',
+      startedAt: '2026-01-01T00:00:00',
+      finishedAt: '2026-01-01T00:00:01',
+      exitCode: 1,
+      statusMessage: 'Script failed',
+      logs: 'failed',
+    }]));
+    vi.useFakeTimers();
+    try {
+      await app.openProcessDetails(process);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(historyRequest).toHaveBeenCalledTimes(1);
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
   });
 });

@@ -33,6 +33,8 @@ export interface ShellCommandOption {
   id: number;
   name: string;
   type: string;
+  executable: string;
+  arguments: string[];
 }
 
 export interface AuthorizedShellCommand {

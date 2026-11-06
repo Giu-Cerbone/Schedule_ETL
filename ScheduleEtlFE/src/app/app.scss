@@ -132,6 +132,7 @@ code { color: #69738a; font-size: 10px; background: #f5f6fa; padding: 4px 6px; b
 .process-detail h3 { margin: 5px 0 0; color: #293145; font-size: 13px; }
 .console-execution { border: 1px solid #e8ebf2; border-radius: 8px; overflow: hidden; }
 .console-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; background: #f8f9fc; color: #7d8698; font-size: 10px; }
+.console-live { color: #16835d; font-weight: 700; letter-spacing: .06em; }
 .console-output { margin: 0; padding: 12px; min-height: 55px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #151b28; color: #d7e0f2; font: 11px/1.5 'Cascadia Code',Consolas,monospace; }
 
 @media (max-width: 1100px) {

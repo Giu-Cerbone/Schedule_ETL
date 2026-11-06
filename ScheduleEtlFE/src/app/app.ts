@@ -1,5 +1,14 @@
 import { CommonModule } from '@angular/common';
-import { ChangeDetectorRef, Component, OnInit, inject } from '@angular/core';
+import {
+  ChangeDetectorRef,
+  Component,
+  ElementRef,
+  OnDestroy,
+  OnInit,
+  QueryList,
+  ViewChildren,
+  inject,
+} from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
@@ -62,7 +71,7 @@ type ProcessAction = 'start' | 'pause' | 'resume' | 'stop';
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
-export class App implements OnInit {
+export class App implements OnDestroy, OnInit {
   view: ViewName = 'overview';
   schedulers: Scheduler[] = [];
   profiles: UserProfile[] = [];
@@ -77,6 +86,8 @@ export class App implements OnInit {
   selectedProcess: ProcessDefinition | null = null;
   selectedProcessDetails: ProcessDefinition | null = null;
   processDetailExecutions: ProcessExecution[] = [];
+  private processDetailPollingTimer: ReturnType<typeof setTimeout> | null = null;
+  @ViewChildren('consoleOutput') private consoleOutputs!: QueryList<ElementRef<HTMLElement>>;
   loading = true;
   saving = false;
   error = '';
@@ -165,6 +176,11 @@ export class App implements OnInit {
 
   ngOnInit(): void {
     void this.refresh();
+  }
+
+  ngOnDestroy(): void {
+    this.stopProcessStatusPolling();
+    this.stopProcessDetailPolling();
   }
 
   get selectedScheduler(): Scheduler | undefined {
@@ -305,13 +321,29 @@ export class App implements OnInit {
     }
   }
 
-  private async loadProcessHistory(schedulerId: number, processes: ProcessDefinition[]): Promise<void> {
+  private async loadProcessHistory(
+    schedulerId: number,
+    processes: ProcessDefinition[],
+    activeOnly = false,
+  ): Promise<void> {
+    const processesToLoad = activeOnly
+      ? processes.filter((process) => this.isExecutionActive(this.latestState(process.id)))
+      : processes;
+    if (processesToLoad.length === 0) return;
     const histories = await Promise.all(
-      processes.map((process) => firstValueFrom(this.api.processHistory(process.schedulerId, process.id))),
+      processesToLoad.map((process) => firstValueFrom(this.api.processHistory(process.schedulerId, process.id))),
     );
     if (this.selectedSchedulerId === schedulerId
       && this.processes.map((process) => process.id).join(',') === processes.map((process) => process.id).join(',')) {
-      this.executions = histories.flat().sort((left, right) => right.id - left.id);
+      if (activeOnly) {
+        const refreshedIds = new Set(processesToLoad.map((process) => process.id));
+        this.executions = [
+          ...this.executions.filter((execution) => !refreshedIds.has(execution.processDefinitionId)),
+          ...histories.flat(),
+        ].sort((left, right) => right.id - left.id);
+      } else {
+        this.executions = histories.flat().sort((left, right) => right.id - left.id);
+      }
       this.changeDetector.markForCheck();
     }
   }
@@ -554,13 +586,14 @@ export class App implements OnInit {
     try {
       this.executions = (await firstValueFrom(this.api.processHistory(process.schedulerId, process.id)))
         .sort((left, right) => right.id - left.id);
-      this.view = 'history';
+      this.setView('history');
     } catch (error) {
       this.reportError(error);
     }
   }
 
   async openProcessDetails(process: ProcessDefinition): Promise<void> {
+    this.stopProcessDetailPolling();
     try {
       this.processDetailExecutions = (await firstValueFrom(
         this.api.processHistory(process.schedulerId, process.id),
@@ -569,9 +602,57 @@ export class App implements OnInit {
       this.detailsTitle = `Dettaglio processo · ${process.name}`;
       this.dialogMode = null;
       this.dialogOpen = true;
+      this.scheduleProcessDetailPolling(process);
     } catch (error) {
       this.reportError(error);
     }
+  }
+
+  onDialogVisibilityChange(visible: boolean): void {
+    if (!visible) this.stopProcessDetailPolling();
+  }
+
+  private scheduleProcessDetailPolling(process: ProcessDefinition): void {
+    if (!this.dialogOpen || this.selectedProcessDetails?.id !== process.id
+      || !this.isExecutionActive(this.latestExecutionState(this.processDetailExecutions))) {
+      return;
+    }
+    this.processDetailPollingTimer = setTimeout(() => void this.pollProcessDetails(process), 500);
+  }
+
+  private async pollProcessDetails(process: ProcessDefinition): Promise<void> {
+    this.processDetailPollingTimer = null;
+    if (!this.dialogOpen || this.selectedProcessDetails?.id !== process.id) return;
+    try {
+      const executions = await firstValueFrom(this.api.processHistory(process.schedulerId, process.id));
+      if (!this.dialogOpen || this.selectedProcessDetails?.id !== process.id) return;
+      this.processDetailExecutions = executions.sort((left, right) => right.id - left.id);
+      this.changeDetector.detectChanges();
+      for (const output of this.consoleOutputs) {
+        output.nativeElement.scrollTop = output.nativeElement.scrollHeight;
+      }
+      this.scheduleProcessDetailPolling(process);
+    } catch (error) {
+      this.reportError(error);
+    }
+  }
+
+  private stopProcessDetailPolling(): void {
+    if (this.processDetailPollingTimer !== null) {
+      clearTimeout(this.processDetailPollingTimer);
+      this.processDetailPollingTimer = null;
+    }
+  }
+
+  private isExecutionActive(state: string): boolean {
+    return ['QUEUED', 'RUNNING', 'PAUSED', 'STOPPING'].includes(state);
+  }
+
+  private latestExecutionState(executions: ProcessExecution[]): string {
+    return executions.reduce<ProcessExecution | null>(
+      (latest, execution) => latest === null || execution.id > latest.id ? execution : latest,
+      null,
+    )?.state ?? 'CREATED';
   }
 
   async runProcess(action: ProcessAction, process: ProcessDefinition): Promise<void> {
@@ -848,7 +929,7 @@ export class App implements OnInit {
     const labels: Record<string, string> = {
       ACTIVE: 'Attivo', INACTIVE: 'Inattivo', PAUSED: 'In pausa', DELETED: 'Eliminato',
       CREATED: 'Creato', QUEUED: 'In coda', RUNNING: 'In esecuzione', STOPPING: 'Arresto',
-      STOPPED: 'Fermato', COMPLETED: 'Completato', FAILED: 'Fallito', CANCELLED: 'Annullato',
+      STOPPED: 'Fermato', COMPLETED: 'Completato', FAILED: 'Fallito (fermato)', CANCELLED: 'Annullato',
     };
     return labels[state] ?? state;
   }
@@ -862,13 +943,36 @@ export class App implements OnInit {
   }
 
   latestState(processId: number): string {
-    return this.pendingStates.get(processId)
-      ?? this.executions.find((execution) => execution.processDefinitionId === processId)?.state
-      ?? 'CREATED';
+    const latestExecution = this.executions.reduce<ProcessExecution | null>((latest, execution) => {
+      if (execution.processDefinitionId !== processId) return latest;
+      return latest === null || execution.id > latest.id ? execution : latest;
+    }, null);
+    return this.pendingStates.get(processId) ?? latestExecution?.state ?? 'CREATED';
   }
 
   private pendingStates = new Map<number, string>();
+  private processStatusPollingInterval: ReturnType<typeof setInterval> | null = null;
+  private processStatusRefreshInProgress = false;
   private readonly changeDetector = inject(ChangeDetectorRef);
+
+  private startProcessStatusPolling(): void {
+    if (this.processStatusPollingInterval !== null) return;
+    this.processStatusPollingInterval = setInterval(() => {
+      if (this.processStatusRefreshInProgress || this.selectedSchedulerId === null || this.processes.length === 0) return;
+      this.processStatusRefreshInProgress = true;
+      void this.loadProcessHistory(this.selectedSchedulerId, this.processes, true)
+        .catch((error: unknown) => this.reportError(error))
+        .finally(() => {
+          this.processStatusRefreshInProgress = false;
+        });
+    }, 2000);
+  }
+
+  private stopProcessStatusPolling(): void {
+    if (this.processStatusPollingInterval === null) return;
+    clearInterval(this.processStatusPollingInterval);
+    this.processStatusPollingInterval = null;
+  }
 
   private descendantIds(processId: number): number[] {
     return this.processes
@@ -887,6 +991,8 @@ export class App implements OnInit {
   setView(view: ViewName): void {
     this.view = view;
     if (view === 'processes' && this.selectedSchedulerId !== null) void this.chooseScheduler(this.selectedSchedulerId);
+    if (view === 'processes') this.startProcessStatusPolling();
+    else this.stopProcessStatusPolling();
     if (view === 'shell-commands') void this.refreshShellCatalogs();
   }
 
@@ -981,12 +1087,12 @@ export class App implements OnInit {
     const scriptId = this.readApprovedScriptName(configuration);
     if (scriptId !== null) {
       const script = this.shellScripts.find((item) => item.id === scriptId);
-      return script ? `Script approvato: ${script.name} · ${script.type}` : `Script approvato: #${scriptId}`;
+      return script ? script.fileName : `Script approvato: #${scriptId}`;
     }
     const commandId = this.readApprovedCommandId(configuration);
     const command = this.shellCommands.find((item) => item.id === commandId);
     return command
-      ? `${command.name} · ${command.type}`
+      ? command.executable
       : commandId ? `Comando autorizzato: ${commandId}` : '—';
   }
 
