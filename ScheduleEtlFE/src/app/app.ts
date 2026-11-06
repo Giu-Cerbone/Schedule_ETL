@@ -28,6 +28,7 @@ import {
   CreateProcess,
   CreateProfile,
   CreateScheduler,
+  EditableSchedulerStatus,
   ApprovedShellScript,
   AuthorizedShellCommandRequest,
   AuthorizedShellCommand,
@@ -90,6 +91,12 @@ export class App implements OnDestroy, OnInit {
   @ViewChildren('consoleOutput') private consoleOutputs!: QueryList<ElementRef<HTMLElement>>;
   loading = true;
   saving = false;
+  readonly schedulerStatusOptions: { label: string; value: EditableSchedulerStatus }[] = [
+    { label: 'Attivo', value: 'ACTIVE' },
+    { label: 'Inattivo', value: 'INACTIVE' },
+    { label: 'In pausa', value: 'PAUSED' },
+  ];
+  readonly updatingSchedulerIds = new Set<number>();
   error = '';
   dialogOpen = false;
   dialogMode: DialogMode = null;
@@ -688,6 +695,25 @@ export class App implements OnDestroy, OnInit {
     } finally {
       this.pendingStates.clear();
       this.changeDetector.detectChanges();
+    }
+  }
+
+  async updateSchedulerStatus(scheduler: Scheduler, status: EditableSchedulerStatus): Promise<void> {
+    if (scheduler.status === status || this.updatingSchedulerIds.has(scheduler.id)) return;
+    this.updatingSchedulerIds.add(scheduler.id);
+    try {
+      const updated = await firstValueFrom(this.api.updateSchedulerStatus(scheduler.id, status));
+      scheduler.status = updated.status;
+      scheduler.updatedAt = updated.updatedAt;
+      this.messages.add({
+        severity: 'success',
+        summary: 'Stato scheduler aggiornato',
+        detail: `${scheduler.name}: ${this.stateLabel(updated.status)}`,
+      });
+    } catch (error) {
+      this.reportError(error);
+    } finally {
+      this.updatingSchedulerIds.delete(scheduler.id);
     }
   }
 

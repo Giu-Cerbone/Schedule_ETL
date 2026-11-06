@@ -9,6 +9,7 @@ import { vi } from 'vitest';
 describe('App', () => {
   let createdProcessRequest: object | undefined;
   let registeredScriptUpdate: { id: number; request: object } | undefined;
+  let updatedSchedulerStatus: { id: number; status: string } | undefined;
   let schedulersResponse: Scheduler[];
   let processesResponse: ProcessDefinition[];
   let processHistoryResponse: Observable<ProcessExecution[]>;
@@ -16,6 +17,7 @@ describe('App', () => {
   beforeEach(async () => {
     createdProcessRequest = undefined;
     registeredScriptUpdate = undefined;
+    updatedSchedulerStatus = undefined;
     schedulersResponse = [];
     processesResponse = [];
     processHistoryResponse = of([]);
@@ -25,6 +27,10 @@ describe('App', () => {
         provide: ScheduleApiService,
         useValue: {
           listSchedulers: () => of(schedulersResponse),
+          updateSchedulerStatus: (id: number, status: string) => {
+            updatedSchedulerStatus = { id, status };
+            return of({ id, status, updatedAt: '2026-01-02T00:00:00' });
+          },
           listProfiles: () => of([]),
           listGroups: () => of([]),
           adminListShellCommands: () => of([]),
@@ -80,6 +86,32 @@ describe('App', () => {
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
     expect(compiled.querySelector('.brand')?.textContent).toContain('SchedulETL');
+  });
+
+  it('saves a selected scheduler status and applies the backend response', async () => {
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const app = fixture.componentInstance;
+    const scheduler: Scheduler = {
+      id: 1,
+      name: 'Daily',
+      description: null,
+      cronExpression: '0 0 2 * * ?',
+      status: 'ACTIVE',
+      ownerProfileId: 1,
+      groupId: null,
+      createdAt: '2026-01-01T00:00:00',
+      updatedAt: '2026-01-01T00:00:00',
+    };
+    app.schedulers = [scheduler];
+
+    await app.updateSchedulerStatus(scheduler, 'PAUSED');
+
+    expect(updatedSchedulerStatus).toEqual({ id: 1, status: 'PAUSED' });
+    expect(scheduler.status).toBe('PAUSED');
+    expect(scheduler.updatedAt).toBe('2026-01-02T00:00:00');
+    fixture.destroy();
   });
 
   it('keeps the dashboard visible while backend data is loading', () => {

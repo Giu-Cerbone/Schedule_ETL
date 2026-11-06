@@ -93,6 +93,12 @@ h1 { color: #20283a; font-size: 26px; letter-spacing: -.8px; margin: 0; font-wei
 code { color: #69738a; font-size: 10px; background: #f5f6fa; padding: 4px 6px; border-radius: 4px; }
 .compact-heading { padding: 17px 19px !important; }
 .row-actions { white-space: nowrap; }
+.scheduler-status-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.scheduler-status-fieldset legend { margin-bottom: 6px; color: #566075; font-size: 11px; font-weight: 600; }
+.scheduler-status-options { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; white-space: nowrap; }
+.scheduler-status-options label { display: inline-flex; align-items: center; gap: 4px; color: #687387; font-size: 10px; font-weight: 400; cursor: pointer; }
+.scheduler-status-options input { margin: 0; accent-color: #536dfe; }
+.scheduler-status-options:disabled { opacity: .6; }
 .process-name { display: flex; align-items: center; gap: 9px; }
 .process-icon { background: #eff5ff; color: #5681d3; }
 .type-pill { display: inline-block; background: #f5f6fa; color: #6f788c; padding: 5px 7px; border-radius: 5px; font-size: 9px; }

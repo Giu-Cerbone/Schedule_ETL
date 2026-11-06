@@ -1,9 +1,12 @@
+export type SchedulerStatus = 'ACTIVE' | 'INACTIVE' | 'PAUSED' | 'DELETED';
+export type EditableSchedulerStatus = Exclude<SchedulerStatus, 'DELETED'>;
+
 export interface Scheduler {
   id: number;
   name: string;
   description: string | null;
   cronExpression: string;
-  status: string;
+  status: SchedulerStatus;
   ownerProfileId: number;
   groupId: number | null;
   createdAt: string;
@@ -119,7 +122,7 @@ export interface CreateScheduler {
   cronExpression: string;
   ownerProfileId: number | null;
   groupId: number | null;
-  status: string;
+  status: EditableSchedulerStatus;
 }
 
 export interface CreateProcess {

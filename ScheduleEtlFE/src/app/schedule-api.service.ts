@@ -6,6 +6,7 @@ import {
   CreateProcess,
   CreateProfile,
   CreateScheduler,
+  EditableSchedulerStatus,
   ApprovedShellScript,
   ApprovedShellScriptRequest,
   AuthorizedShellCommand,
@@ -38,6 +39,10 @@ export class ScheduleApiService {
 
   createScheduler(request: CreateScheduler): Observable<Scheduler> {
     return this.http.post<Scheduler>(`${this.baseUrl}/schedulers`, request);
+  }
+
+  updateSchedulerStatus(id: number, status: EditableSchedulerStatus): Observable<Scheduler> {
+    return this.http.put<Scheduler>(`${this.baseUrl}/schedulers/${id}/status`, { status });
   }
 
   assignSchedulerToGroup(schedulerId: number, groupId: number): Observable<Scheduler> {
