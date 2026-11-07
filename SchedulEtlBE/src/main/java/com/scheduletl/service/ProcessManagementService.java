@@ -4,6 +4,7 @@ import com.scheduletl.domain.*;
 import com.scheduletl.dto.CreateProcessDefinitionRequest;
 import com.scheduletl.dto.ProcessDefinitionResponse;
 import com.scheduletl.dto.ProcessExecutionResponse;
+import com.scheduletl.dto.ProcessScheduleDayRequest;
 import com.scheduletl.repository.ProcessDefinitionRepository;
 import com.scheduletl.repository.ProcessExecutionRepository;
 import com.scheduletl.repository.ProcessTypeRepository;
@@ -17,9 +18,13 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
@@ -79,6 +84,7 @@ public class ProcessManagementService {
         definition.setParentProcess(findParentProcess(schedulerId, null, request.parentProcessId()));
         definition.setRunIfParentFails(definition.getParentProcess() != null && request.runIfParentFails());
         definition.setSequenceOrder(newSequenceOrder(schedulerId, definition.getParentProcess(), request.sequenceOrder()));
+        updateStartSchedule(definition, request.startSchedule());
 
         ProcessDefinition saved = processDefinitionRepository.save(definition);
         return toDefinitionResponse(saved);
@@ -98,6 +104,7 @@ public class ProcessManagementService {
         definition.setEnabled(request.enabled());
         definition.setParentProcess(newParent);
         definition.setRunIfParentFails(newParent != null && request.runIfParentFails());
+        updateStartSchedule(definition, request.startSchedule());
         return toDefinitionResponse(processDefinitionRepository.save(definition));
     }
 
@@ -135,7 +142,9 @@ public class ProcessManagementService {
         return requested;
     }
 
-    /** Root processes are always 0; descendants keep a unique order in their hierarchy, swapping on a clash. */
+    /**
+     * Root processes are always 0; descendants keep a unique order in their hierarchy, swapping on a clash.
+     */
     private void applySequenceOrder(Long schedulerId, ProcessDefinition definition, ProcessDefinition newParent,
                                     Integer requested) {
         if (newParent == null) {
@@ -162,7 +171,7 @@ public class ProcessManagementService {
             if (clash != null) {
                 clash.setSequenceOrder(oldOrder >= 1 ? oldOrder
                         : treeMembers(schedulerId, targetRoot).stream()
-                                .mapToInt(ProcessDefinition::getSequenceOrder).max().orElse(0) + 1);
+                        .mapToInt(ProcessDefinition::getSequenceOrder).max().orElse(0) + 1);
                 processDefinitionRepository.save(clash);
             }
             definition.setSequenceOrder(target);
@@ -206,7 +215,20 @@ public class ProcessManagementService {
 
     @Transactional
     public ProcessExecutionResponse startProcess(Long schedulerId, Long processDefinitionId) {
+        return startProcess(schedulerId, processDefinitionId, false);
+    }
+
+    @Transactional
+    public ProcessExecutionResponse startScheduledProcess(Long schedulerId, Long processDefinitionId) {
+        return startProcess(schedulerId, processDefinitionId, true);
+    }
+
+    private ProcessExecutionResponse startProcess(Long schedulerId, Long processDefinitionId, boolean scheduledStart) {
         ProcessDefinition definition = findProcessDefinition(schedulerId, processDefinitionId);
+        if (!scheduledStart && !definition.getStartSchedules().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This process can only be started according to its configured schedule");
+        }
         ProcessNode processTree = snapshotTree(definition);
         List<Long> claimedIds = processTree.definitionIds();
         synchronized (activeProcessLock) {
@@ -246,6 +268,7 @@ public class ProcessManagementService {
         List<ProcessNode> children = processDefinitionRepository
                 .findByParentProcessIdOrderBySequenceOrderAscIdAsc(definition.getId()).stream()
                 .filter(ProcessDefinition::isEnabled)
+                .filter(child -> child.getStartSchedules().isEmpty())
                 .map(this::snapshotTree)
                 .toList();
         return new ProcessNode(definition.getId(), definition.getType().getCode(), definition.getConfiguration(),
@@ -451,6 +474,21 @@ public class ProcessManagementService {
     }
 
     private ProcessDefinitionResponse toDefinitionResponse(ProcessDefinition processDefinition) {
+        Map<ProcessScheduleDay, Map<LocalDate, List<LocalTime>>> slotsByDay =
+                new java.util.EnumMap<>(ProcessScheduleDay.class);
+        processDefinition.getStartSchedules().stream()
+                .sorted(java.util.Comparator.comparing(ProcessStartSchedule::getDayOfWeek)
+                        .thenComparing(ProcessStartSchedule::getStartDate)
+                        .thenComparing(ProcessStartSchedule::getStartTime))
+                .forEach(slot -> slotsByDay
+                        .computeIfAbsent(slot.getDayOfWeek(), ignored -> new java.util.HashMap<>())
+                        .computeIfAbsent(slot.getStartDate(), ignored -> new ArrayList<>())
+                        .add(slot.getStartTime()));
+        List<ProcessDefinitionResponse.ProcessScheduleDayResponse> schedule = slotsByDay.entrySet().stream()
+                .flatMap(dayEntry -> dayEntry.getValue().entrySet().stream()
+                        .map(dateEntry -> new ProcessDefinitionResponse.ProcessScheduleDayResponse(
+                                dayEntry.getKey(), dateEntry.getKey(), dateEntry.getValue())))
+                .toList();
         return new ProcessDefinitionResponse(
                 processDefinition.getId(),
                 processDefinition.getName(),
@@ -462,8 +500,53 @@ public class ProcessManagementService {
                 processDefinition.getParentProcess() != null ? processDefinition.getParentProcess().getId() : null,
                 processDefinition.getSequenceOrder(),
                 processDefinition.isRunIfParentFails(),
+                schedule,
                 processDefinition.getCreatedAt()
         );
+    }
+
+    private void updateStartSchedule(ProcessDefinition definition,
+                                     List<ProcessScheduleDayRequest> requestedSchedule) {
+        Map<ProcessScheduleDay, Map<LocalDate, Map<LocalTime, ProcessStartSchedule>>> existing =
+                new java.util.EnumMap<>(ProcessScheduleDay.class);
+        for (ProcessStartSchedule slot : definition.getStartSchedules()) {
+            existing.computeIfAbsent(slot.getDayOfWeek(), ignored -> new HashMap<>())
+                    .computeIfAbsent(slot.getStartDate(), ignored -> new HashMap<>())
+                    .put(slot.getStartTime(), slot);
+        }
+
+        Set<ProcessScheduleDay> seenDays = new java.util.HashSet<>();
+        List<ProcessStartSchedule> slots = new ArrayList<>();
+        if (requestedSchedule != null) {
+            for (var day : requestedSchedule) {
+                if (day == null || day.dayOfWeek() == null || !seenDays.add(day.dayOfWeek())) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Schedule days must be unique and valid");
+                }
+                if (day.date() == null || day.date().getDayOfWeek() != java.time.DayOfWeek.valueOf(day.dayOfWeek().name())) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "The date must match the selected weekday");
+                }
+                Set<LocalTime> seenTimes = new java.util.HashSet<>();
+                for (LocalTime time : day.times()) {
+                    if (time == null || !seenTimes.add(time)) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                "Each configured date must contain unique start times");
+                    }
+                    ProcessStartSchedule slot = existing.getOrDefault(day.dayOfWeek(), Map.of())
+                            .getOrDefault(day.date(), Map.of()).get(time);
+                    if (slot == null) {
+                        slot = new ProcessStartSchedule();
+                        slot.setDayOfWeek(day.dayOfWeek());
+                        slot.setStartDate(day.date());
+                        slot.setStartTime(time);
+                    }
+                    slot.setProcessDefinition(definition);
+                    slots.add(slot);
+                }
+            }
+        }
+        definition.getStartSchedules().clear();
+        definition.getStartSchedules().addAll(slots);
     }
 
     private ProcessExecutionResponse toExecutionResponse(ProcessExecution execution) {

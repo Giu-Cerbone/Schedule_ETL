@@ -2,6 +2,7 @@ package com.scheduletl.controller;
 
 import com.scheduletl.dto.CreateSchedulerRequest;
 import com.scheduletl.dto.SchedulerResponse;
+import com.scheduletl.dto.UpdateSchedulerStatusRequest;
 import com.scheduletl.service.SchedulerService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -43,6 +44,13 @@ public class SchedulerController {
     @Operation(summary = "Assign a scheduler to a user group")
     public ResponseEntity<SchedulerResponse> assignToGroup(@PathVariable Long schedulerId, @PathVariable Long groupId) {
         return ResponseEntity.ok(schedulerService.assignToGroup(schedulerId, groupId));
+    }
+
+    @PutMapping("/{id}/status")
+    @Operation(summary = "Update a scheduler status")
+    public ResponseEntity<SchedulerResponse> updateStatus(@PathVariable Long id,
+                                                           @Valid @RequestBody UpdateSchedulerStatusRequest request) {
+        return ResponseEntity.ok(schedulerService.updateStatus(id, request));
     }
 
     @DeleteMapping("/{id}")

@@ -2,6 +2,8 @@ package com.scheduletl.service;
 
 import com.scheduletl.domain.ProcessDefinition;
 import com.scheduletl.domain.ProcessExecution;
+import com.scheduletl.domain.ProcessScheduleDay;
+import com.scheduletl.domain.ProcessStartSchedule;
 import com.scheduletl.domain.ProcessState;
 import com.scheduletl.domain.ProcessType;
 import com.scheduletl.domain.Scheduler;
@@ -21,6 +23,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Set;
+import java.time.LocalTime;
+import java.time.LocalDate;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.Optional;
@@ -31,6 +35,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -107,6 +112,58 @@ class ProcessManagementServiceTest {
     }
 
     @Test
+    void persistsRecurringStartSchedule() {
+        Scheduler scheduler = scheduler();
+        SchedulerRepository schedulerRepository = mock(SchedulerRepository.class);
+        var startSchedule = List.of(
+                new com.scheduletl.dto.ProcessScheduleDayRequest(
+                        com.scheduletl.domain.ProcessScheduleDay.MONDAY,
+                        List.of(LocalTime.of(8, 30), LocalTime.of(12, 0)), LocalDate.of(2026, 12, 7)),
+                new com.scheduletl.dto.ProcessScheduleDayRequest(
+                        com.scheduletl.domain.ProcessScheduleDay.FRIDAY,
+                        List.of(LocalTime.of(9, 15)), LocalDate.of(2026, 12, 4)));
+        AtomicReference<ProcessDefinition> savedDefinition = new AtomicReference<>();
+        when(schedulerRepository.findById(scheduler.getId())).thenReturn(Optional.of(scheduler));
+        when(processTypeRepository.findById("SQLDATABASE")).thenReturn(Optional.of(processType()));
+        when(processDefinitionRepository.save(any())).thenAnswer(invocation -> {
+            ProcessDefinition definition = invocation.getArgument(0);
+            definition.setId(1L);
+            savedDefinition.set(definition);
+            return definition;
+        });
+
+        ProcessDefinitionResponse response = service(schedulerRepository).createProcessDefinition(
+                scheduler.getId(),
+                new CreateProcessDefinitionRequest("Scheduled", "SQLDATABASE", null, null,
+                        true, null, 0, false, startSchedule));
+
+        assertEquals(3, savedDefinition.get().getStartSchedules().size());
+        assertEquals(LocalDate.of(2026, 12, 7), savedDefinition.get().getStartSchedules().getFirst().getStartDate());
+        assertEquals(2, response.startSchedule().getFirst().times().size());
+        assertEquals(LocalDate.of(2026, 12, 7), response.startSchedule().getFirst().startDate());
+        assertEquals(LocalTime.of(9, 15), response.startSchedule().getLast().times().getFirst());
+        assertEquals(LocalDate.of(2026, 12, 4), response.startSchedule().getLast().startDate());
+    }
+
+    @Test
+    void preventsManualStartWhenProcessHasAConfiguredSchedule() {
+        Scheduler scheduler = scheduler();
+        ProcessDefinition definition = new ProcessDefinition();
+        definition.setId(8L);
+        definition.setScheduler(scheduler);
+        ProcessStartSchedule slot = new ProcessStartSchedule();
+        slot.setDayOfWeek(ProcessScheduleDay.MONDAY);
+        slot.setStartTime(LocalTime.of(8, 30));
+        slot.setProcessDefinition(definition);
+        definition.getStartSchedules().add(slot);
+        when(processDefinitionRepository.findById(8L)).thenReturn(Optional.of(definition));
+
+        assertThrows(ResponseStatusException.class,
+                () -> service(Runnable::run, new Semaphore(1))
+                        .startProcess(scheduler.getId(), definition.getId()));
+    }
+
+    @Test
     void childFailureDoesNotChangeParentOrSiblingExecutionStates() throws Exception {
         Scheduler scheduler = scheduler();
         ProcessDefinition parent = process(1L, scheduler, null, 0, true);
@@ -121,15 +178,15 @@ class ProcessManagementServiceTest {
 
         when(processDefinitionRepository.findById(parent.getId())).thenReturn(Optional.of(parent));
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(parent.getId()))
-                        .thenReturn(List.of(failingChild, sibling));
+                .thenReturn(List.of(failingChild, sibling));
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(failingChild.getId()))
-                        .thenReturn(List.of());
+                .thenReturn(List.of());
         when(processDefinitionRepository.findByParentProcessIdOrderBySequenceOrderAscIdAsc(sibling.getId()))
-                        .thenReturn(List.of());
+                .thenReturn(List.of());
         when(shellCommandExecutor.execute(any(), any())).thenAnswer(invocation -> {
             String configuration = invocation.getArgument(0);
             return new ShellScriptExecutor.ExecutionResult(
-                            "failing-child".equals(configuration) ? 1 : 0, configuration, false);
+                    "failing-child".equals(configuration) ? 1 : 0, configuration, false);
         });
 
         service.startProcess(scheduler.getId(), parent.getId());
@@ -410,7 +467,7 @@ class ProcessManagementServiceTest {
     }
 
     private ProcessManagementService service(SchedulerRepository schedulerRepository, Executor executor,
-                                              Semaphore semaphore) {
+                                             Semaphore semaphore) {
         return new ProcessManagementService(schedulerRepository, processDefinitionRepository,
                 processExecutionRepository, processTypeRepository,
                 new ProcessExecutionWorker(processExecutionRepository, shellCommandExecutor), executor, semaphore);

@@ -9,6 +9,8 @@ import java.util.List;
 @Repository
 public interface ProcessDefinitionRepository extends JpaRepository<ProcessDefinition, Long> {
     List<ProcessDefinition> findBySchedulerIdOrderByParentProcessIdAscSequenceOrderAscIdAsc(Long schedulerId);
+
     List<ProcessDefinition> findByParentProcessIdOrderBySequenceOrderAscIdAsc(Long parentProcessId);
+
     List<ProcessDefinition> findByTypeCode(String code);
 }

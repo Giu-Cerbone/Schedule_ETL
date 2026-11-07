@@ -3,11 +3,14 @@ package com.scheduletl.service;
 import com.scheduletl.domain.*;
 import com.scheduletl.dto.CreateSchedulerRequest;
 import com.scheduletl.dto.SchedulerResponse;
+import com.scheduletl.dto.UpdateSchedulerStatusRequest;
 import com.scheduletl.repository.*;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -35,6 +38,7 @@ public class SchedulerService {
 
     @Transactional
     public SchedulerResponse create(CreateSchedulerRequest request) {
+        validateStatus(request.status());
         UserProfile owner = userProfileRepository.findById(request.ownerProfileId())
                 .orElseThrow(() -> new EntityNotFoundException("Owner profile not found: " + request.ownerProfileId()));
 
@@ -56,6 +60,15 @@ public class SchedulerService {
     }
 
     @Transactional
+    public SchedulerResponse updateStatus(Long schedulerId, UpdateSchedulerStatusRequest request) {
+        validateStatus(request.status());
+        Scheduler scheduler = schedulerRepository.findById(schedulerId)
+                .orElseThrow(() -> new EntityNotFoundException("Scheduler not found: " + schedulerId));
+        scheduler.setStatus(request.status());
+        return toResponse(schedulerRepository.save(scheduler));
+    }
+
+    @Transactional
     public SchedulerResponse assignToGroup(Long schedulerId, Long groupId) {
         Scheduler scheduler = schedulerRepository.findById(schedulerId)
                 .orElseThrow(() -> new EntityNotFoundException("Scheduler not found: " + schedulerId));
@@ -72,6 +85,12 @@ public class SchedulerService {
                 .orElseThrow(() -> new EntityNotFoundException("Scheduler not found: " + schedulerId));
         scheduler.setStatus(SchedulerStatus.DELETED);
         schedulerRepository.save(scheduler);
+    }
+
+    private void validateStatus(SchedulerStatus status) {
+        if (status == SchedulerStatus.DELETED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use the delete endpoint to delete a scheduler.");
+        }
     }
 
     private SchedulerResponse toResponse(Scheduler scheduler) {

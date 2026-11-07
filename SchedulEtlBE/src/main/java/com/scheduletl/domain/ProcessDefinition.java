@@ -59,6 +59,9 @@ public class ProcessDefinition {
     private List<ProcessDefinition> childProcesses = new ArrayList<>();
 
     @OneToMany(mappedBy = "processDefinition", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<ProcessStartSchedule> startSchedules = new ArrayList<>();
+
+    @OneToMany(mappedBy = "processDefinition", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ProcessExecution> executions = new ArrayList<>();
 
     @PrePersist
