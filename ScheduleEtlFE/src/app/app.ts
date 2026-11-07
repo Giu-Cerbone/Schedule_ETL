@@ -36,6 +36,7 @@ import {
   RegisteredShellScript,
   ProcessDefinition,
   ProcessExecution,
+  ProcessScheduleDayName,
   ProcessType,
   ShellCommandOption,
   ShellScriptOption,
@@ -144,7 +145,17 @@ export class App implements OnDestroy, OnInit {
     parentProcessId: null,
     sequenceOrder: 0,
     runIfParentFails: false,
+    startSchedule: [],
   };
+  readonly scheduleDayOptions = [
+    { value: 'MONDAY', label: 'Lunedì' },
+    { value: 'TUESDAY', label: 'Martedì' },
+    { value: 'WEDNESDAY', label: 'Mercoledì' },
+    { value: 'THURSDAY', label: 'Giovedì' },
+    { value: 'FRIDAY', label: 'Venerdì' },
+    { value: 'SATURDAY', label: 'Sabato' },
+    { value: 'SUNDAY', label: 'Domenica' },
+  ] as const;
   profileForm: CreateProfile = { username: '', fullName: '', email: '' };
   groupForm: CreateGroup = { name: '', description: '' };
   assignGroupId: number | null = null;
@@ -736,6 +747,7 @@ export class App implements OnDestroy, OnInit {
         parentProcessId: null,
         sequenceOrder: 0,
         runIfParentFails: false,
+        startSchedule: [],
       };
     } else if (mode === 'profile') {
       this.profileForm = { username: '', fullName: '', email: '' };
@@ -767,7 +779,47 @@ export class App implements OnDestroy, OnInit {
       parentProcessId: process.parentProcessId,
       sequenceOrder: process.parentProcessId !== null && process.sequenceOrder < 1 ? 1 : process.sequenceOrder,
       runIfParentFails: process.runIfParentFails,
+      startSchedule: (process.startSchedule ?? []).map((day) => ({
+        dayOfWeek: day.dayOfWeek,
+        times: [...day.times],
+        startDate: day.startDate ?? null,
+      })),
     };
+  }
+
+  toggleScheduleDay(dayOfWeek: ProcessScheduleDayName, selected: boolean): void {
+    const schedule = this.processForm.startSchedule ?? [];
+    const existing = schedule.find((day) => day.dayOfWeek === dayOfWeek);
+    if (selected && !existing) {
+      this.processForm.startSchedule = [...schedule, { dayOfWeek, times: ['09:00'], startDate: null }];
+    } else if (!selected && existing) {
+      this.processForm.startSchedule = schedule.filter((day) => day.dayOfWeek !== dayOfWeek);
+    }
+  }
+
+  addScheduleTime(dayOfWeek: string): void {
+    const day = this.processForm.startSchedule?.find((item) => item.dayOfWeek === dayOfWeek);
+    day?.times.push('09:00');
+  }
+
+  removeScheduleTime(dayOfWeek: string, index: number): void {
+    const day = this.processForm.startSchedule?.find((item) => item.dayOfWeek === dayOfWeek);
+    day?.times.splice(index, 1);
+    if (day?.times.length === 0) {
+      this.toggleScheduleDay(day.dayOfWeek, false);
+    }
+  }
+
+  processScheduleSummary(process: ProcessDefinition): string {
+    const days = (process.startSchedule ?? [])
+      .map((day) => `${this.scheduleDayOptions.find((option) => option.value === day.dayOfWeek)?.label ?? day.dayOfWeek}: ${day.times.join(', ')}${day.startDate ? ` dal ${day.startDate}` : ''}`)
+      .join(' · ');
+    if (!days) return 'Avvio manuale';
+    return days;
+  }
+
+  isProcessScheduled(process: ProcessDefinition): boolean {
+    return (process.startSchedule ?? []).some((day) => day.times.length > 0);
   }
 
   onProcessTypeChange(type: string): void {
@@ -1062,18 +1114,27 @@ export class App implements OnDestroy, OnInit {
   }
 
   private processSaveRequest(): CreateProcess {
-    if (this.processForm.type !== 'SHELL_CMD') return this.processForm;
+    const request: CreateProcess = {
+      ...this.processForm,
+      startSchedule: this.processForm.startSchedule ?? [],
+    };
+    if (this.processForm.type !== 'SHELL_CMD') return request;
     if (this.shellExecutionMode === 'command') {
       if (!this.shellCommandId || !this.shellCommands.some((command) => command.id === this.shellCommandId)) {
         throw new Error('Seleziona un comando autorizzato configurato sul backend.');
       }
-      return { ...this.processForm, configuration: JSON.stringify({ commandId: this.shellCommandId }) };
+      return { ...request, configuration: JSON.stringify({ commandId: this.shellCommandId }) };
     }
     const scriptId = this.shellScriptName;
     if (scriptId === null || !this.shellScripts.some((script) => script.id === scriptId)) {
       throw new Error('Seleziona uno script presente nella directory approvata sul backend.');
     }
-    return { ...this.processForm, configuration: JSON.stringify({ script: String(scriptId) }) };
+    return { ...request, configuration: JSON.stringify({ script: String(scriptId) }) };
+  }
+
+  private toLocalDateTimeInput(instant: string): string {
+    const date = new Date(instant);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 19);
   }
 
   private readApprovedScriptName(configuration: string | null): number | null {

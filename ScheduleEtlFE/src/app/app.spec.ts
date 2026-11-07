@@ -8,6 +8,7 @@ import { vi } from 'vitest';
 
 describe('App', () => {
   let createdProcessRequest: object | undefined;
+  let updatedProcessRequest: object | undefined;
   let registeredScriptUpdate: { id: number; request: object } | undefined;
   let updatedSchedulerStatus: { id: number; status: string } | undefined;
   let schedulersResponse: Scheduler[];
@@ -16,6 +17,7 @@ describe('App', () => {
 
   beforeEach(async () => {
     createdProcessRequest = undefined;
+    updatedProcessRequest = undefined;
     registeredScriptUpdate = undefined;
     updatedSchedulerStatus = undefined;
     schedulersResponse = [];
@@ -60,6 +62,10 @@ describe('App', () => {
           processHistory: () => processHistoryResponse,
           createProcess: (_schedulerId: number, request: object) => {
             createdProcessRequest = request;
+            return of({});
+          },
+          updateProcess: (_schedulerId: number, _processId: number, request: object) => {
+            updatedProcessRequest = request;
             return of({});
           },
         },
@@ -277,6 +283,55 @@ describe('App', () => {
     });
   });
 
+  it('submits multiple weekly start times for each selected day', async () => {
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.selectedSchedulerId = 1;
+    app.dialogMode = 'process';
+    app.processForm.startSchedule = [
+      { dayOfWeek: 'MONDAY', times: ['08:30', '12:00'], startDate: '2026-12-07' },
+      { dayOfWeek: 'FRIDAY', times: ['09:15'], startDate: '2026-12-04' },
+    ];
+
+    await app.saveDialog();
+
+    expect(createdProcessRequest).toMatchObject({
+      startSchedule: [
+        { dayOfWeek: 'MONDAY', times: ['08:30', '12:00'], startDate: '2026-12-07' },
+        { dayOfWeek: 'FRIDAY', times: ['09:15'], startDate: '2026-12-04' },
+      ],
+    });
+    fixture.destroy();
+  });
+
+  it('keeps the weekly start schedule when editing', async () => {
+    const fixture = TestBed.createComponent(App);
+    const app = fixture.componentInstance;
+    app.selectedSchedulerId = 1;
+    const process: ProcessDefinition = {
+      id: 2,
+      name: 'Scheduled',
+      type: 'SQLDATABASE',
+      description: null,
+      configuration: null,
+      enabled: true,
+      schedulerId: 1,
+      parentProcessId: null,
+      sequenceOrder: 0,
+      runIfParentFails: false,
+      startSchedule: [{ dayOfWeek: 'TUESDAY', times: ['08:30', '12:00'], startDate: '2026-12-01' }],
+      createdAt: '2026-01-01T00:00:00',
+    };
+
+    app.editProcess(process);
+    await app.saveDialog();
+
+    expect(updatedProcessRequest).toMatchObject({
+      startSchedule: [{ dayOfWeek: 'TUESDAY', times: ['08:30', '12:00'], startDate: '2026-12-01' }],
+    });
+    fixture.destroy();
+  });
+
   it('should submit the child setting to run after parent failure', async () => {
     const fixture = TestBed.createComponent(App);
     const app = fixture.componentInstance;
@@ -385,7 +440,7 @@ describe('App', () => {
 
     const rows = (fixture.nativeElement as HTMLElement).querySelectorAll('.table-panel tbody tr');
     expect(rows).toHaveLength(2);
-    for (const row of rows) expect(row.querySelectorAll('td')).toHaveLength(8);
+    for (const row of rows) expect(row.querySelectorAll('td')).toHaveLength(9);
     expect(rows[0].querySelector('td:nth-child(3)')?.textContent).toContain('echo');
     expect(rows[1].querySelector('td:nth-child(3)')?.textContent).toContain('daily-report.sh');
   });

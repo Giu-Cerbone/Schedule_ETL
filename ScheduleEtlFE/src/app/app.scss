@@ -128,6 +128,24 @@ code { color: #69738a; font-size: 10px; background: #f5f6fa; padding: 4px 6px; b
 .loading-state { display: flex; justify-content: center; align-items: center; gap: 10px; min-height: 280px; color: #848da0; font-size: 12px; }
 .loading-state i { color: #536dfe; }
 .form-grid { display: grid; gap: 13px; padding: 3px 0 8px; }
+.process-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
+.process-form-grid > .process-start-schedule { grid-column: 1 / -1; }
+.process-start-schedule { display: grid; gap: 12px; min-width: 0; padding: 14px; border: 1px solid #d5eee3; border-radius: 10px; background: #f3fbf7; }
+.process-start-schedule legend { padding: 0 6px; color: #267a5a; font-size: 11px; font-weight: 700; }
+.process-start-schedule > small { color: #70877c; font-size: 10px; }
+.schedule-day-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; width: 100%; }
+.schedule-start-date { display: grid; gap: 6px; max-width: 260px; color: #39745b; font-size: 10px; font-weight: 600; }
+.schedule-start-date input[type="date"] { border-color: #c5e5d5; border-radius: 7px; background: #f8fdf9; color: #285d46; color-scheme: light; }
+.schedule-start-date input[type="date"]:focus { border-color: #69bd94; outline: 2px solid #69bd9430; }
+.schedule-start-date small { color: #70877c; font-size: 9px; font-weight: 400; }
+.schedule-day-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.schedule-day-options label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #d9eee4; border-radius: 7px; background: #eaf7f0; color: #39745b; font-size: 10px; cursor: pointer; }
+.schedule-day-options input { margin: 0; accent-color: #35a978; }
+.schedule-times { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; background: #eaf7f0; }
+.schedule-times > strong { min-width: 72px; color: #39745b; font-size: 10px; }
+.schedule-time { display: flex; align-items: center; gap: 3px; }
+.schedule-time input[type="time"] { width: 116px; padding: 7px 9px; border: 1px solid #c5e5d5; border-radius: 7px; background: #f8fdf9; color: #285d46; color-scheme: light; font: inherit; }
+.schedule-time input[type="time"]:focus { border-color: #69bd94; outline: 2px solid #69bd9430; }
 .form-grid label { display: grid; gap: 6px; color: #566075; font-size: 11px; font-weight: 600; }
 .form-grid label > small { font-size: 9px; color: #929aaa; font-weight: 400; }
 .form-grid input[pInputText],.form-grid textarea[pTextarea],.form-grid p-select { width: 100%; }
@@ -148,6 +166,8 @@ code { color: #69738a; font-size: 10px; background: #f5f6fa; padding: 4px 6px; b
   .metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 760px) {
+  .process-form-grid { grid-template-columns: 1fr; }
+  .process-form-grid > .process-start-schedule { grid-column: auto; }
   .sidebar { width: 61px; flex-basis: 61px; padding: 18px 8px 10px; }
   .brand { padding: 0 3px 30px; }
   .brand > span:last-child,.workspace-label,.nav-link span,.connection,.user-chip > span:not(.avatar),.user-chip > i { display: none; }

@@ -24,7 +24,17 @@ export interface ProcessDefinition {
   parentProcessId: number | null;
   sequenceOrder: number;
   runIfParentFails: boolean;
+  startSchedule?: ProcessScheduleDay[];
   createdAt: string;
+}
+
+export type ProcessScheduleDayName =
+  | 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY' | 'SUNDAY';
+
+export interface ProcessScheduleDay {
+  dayOfWeek: ProcessScheduleDayName;
+  times: string[];
+  startDate?: string | null;
 }
 
 export interface ProcessType {
@@ -134,6 +144,7 @@ export interface CreateProcess {
   parentProcessId: number | null;
   sequenceOrder: number;
   runIfParentFails: boolean;
+  startSchedule?: ProcessScheduleDay[];
 }
 
 export interface CreateProfile {
