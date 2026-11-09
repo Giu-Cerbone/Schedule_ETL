@@ -21,7 +21,8 @@
         "build": {
           "builder": "@angular/build:application",
           "options": {
-            "browser": "src/main.ts",
+            "browser": "src/app/main.ts",
+            "index": "src/app/index.html",
             "tsConfig": "tsconfig.app.json",
             "inlineStyleLanguage": "scss",
             "assets": [
@@ -31,7 +32,7 @@
               }
             ],
             "styles": [
-              "src/styles.scss"
+              "src/app/styles.scss"
             ]
           },
           "configurations": {
