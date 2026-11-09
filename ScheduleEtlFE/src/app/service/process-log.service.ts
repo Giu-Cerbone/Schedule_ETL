@@ -25,7 +25,7 @@ export class ProcessLogService {
   readonly levelOptions = ['INFO', 'WARN', 'ERROR'];
   readonly eventOptions = ['QUEUED', 'STARTED', 'STEP', 'COMPLETED', 'FAILED', 'CANCELLED', 'PAUSE', 'RESUME', 'STOP'];
   readonly triggerOptions = ['MANUAL', 'SCHEDULED'];
-  readonly pageSize = 50;
+  readonly pageSize = 10;
   logs: ProcessEventLog[] = [];
   total = 0;
   page = 0;
