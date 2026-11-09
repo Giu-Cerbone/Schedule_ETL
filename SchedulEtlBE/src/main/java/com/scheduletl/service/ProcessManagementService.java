@@ -478,7 +478,8 @@ public class ProcessManagementService {
                 new java.util.EnumMap<>(ProcessScheduleDay.class);
         processDefinition.getStartSchedules().stream()
                 .sorted(java.util.Comparator.comparing(ProcessStartSchedule::getDayOfWeek)
-                        .thenComparing(ProcessStartSchedule::getStartDate)
+                        .thenComparing(ProcessStartSchedule::getStartDate,
+                                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))
                         .thenComparing(ProcessStartSchedule::getStartTime))
                 .forEach(slot -> slotsByDay
                         .computeIfAbsent(slot.getDayOfWeek(), ignored -> new java.util.HashMap<>())
@@ -522,7 +523,8 @@ public class ProcessManagementService {
                 if (day == null || day.dayOfWeek() == null || !seenDays.add(day.dayOfWeek())) {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Schedule days must be unique and valid");
                 }
-                if (day.date() == null || day.date().getDayOfWeek() != java.time.DayOfWeek.valueOf(day.dayOfWeek().name())) {
+                if (day.startDate() != null
+                        && day.startDate().getDayOfWeek() != java.time.DayOfWeek.valueOf(day.dayOfWeek().name())) {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "The date must match the selected weekday");
                 }
@@ -532,12 +534,12 @@ public class ProcessManagementService {
                         throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                                 "Each configured date must contain unique start times");
                     }
-                    ProcessStartSchedule slot = existing.getOrDefault(day.dayOfWeek(), Map.of())
-                            .getOrDefault(day.date(), Map.of()).get(time);
+                    ProcessStartSchedule slot = existing.getOrDefault(day.dayOfWeek(), new HashMap<>())
+                            .getOrDefault(day.startDate(), new HashMap<>()).get(time);
                     if (slot == null) {
                         slot = new ProcessStartSchedule();
                         slot.setDayOfWeek(day.dayOfWeek());
-                        slot.setStartDate(day.date());
+                        slot.setStartDate(day.startDate());
                         slot.setStartTime(time);
                     }
                     slot.setProcessDefinition(definition);

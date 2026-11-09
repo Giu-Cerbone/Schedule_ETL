@@ -35,15 +35,17 @@ public class ScheduledProcessStarter {
     void processDueSlots(LocalDateTime from, LocalDateTime now) {
         for (ProcessStartSchedule slot : scheduleRepository.findAll()) {
             if (!slot.getProcessDefinition().isEnabled()
-                    || slot.getProcessDefinition().getScheduler().getStatus() != SchedulerStatus.ACTIVE
-                    || (slot.getStartDate() != null && now.toLocalDate().isBefore(slot.getStartDate()))) {
+                    || slot.getProcessDefinition().getScheduler().getStatus() != SchedulerStatus.ACTIVE) {
                 continue;
             }
-            LocalDate date = slot.getStartDate() != null && from.toLocalDate().isBefore(slot.getStartDate())
-                    ? slot.getStartDate() : from.toLocalDate();
+            // Con data valorizzata il processo parte solo in quella data; senza data, ogni giorno della settimana scelto.
+            LocalDate date = from.toLocalDate();
             while (!date.isAfter(now.toLocalDate())) {
                 LocalDateTime scheduledAt = date.atTime(slot.getStartTime());
-                if (date.getDayOfWeek() == toDayOfWeek(slot.getDayOfWeek())
+                boolean dateMatches = slot.getStartDate() == null
+                        ? date.getDayOfWeek() == toDayOfWeek(slot.getDayOfWeek())
+                        : date.equals(slot.getStartDate());
+                if (dateMatches
                         && scheduledAt.isAfter(from) && !scheduledAt.isAfter(now)
                         && scheduleRepository.claimScheduledStart(slot.getId(), scheduledAt) == 1) {
                     try {

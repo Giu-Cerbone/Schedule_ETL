@@ -10,6 +10,6 @@ import java.util.List;
 public record ProcessScheduleDayRequest(
         @NotNull ProcessScheduleDay dayOfWeek,
         List<@NotNull LocalTime> times,
-        @NotNull LocalDate date
+        LocalDate startDate
 ) {
 }
