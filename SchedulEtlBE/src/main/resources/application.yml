@@ -44,6 +44,7 @@ scheduletl:
     password: ${SCHEDULETL_ADMIN_PASSWORD:admin}
   process:
     max-concurrent: 4
+    scheduler-poll-ms: 30000
     shell:
       enabled: true
       allowed-directory: ./approved-scripts

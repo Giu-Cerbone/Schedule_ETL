@@ -138,6 +138,13 @@ code { color: #69738a; font-size: 10px; background: #f5f6fa; padding: 4px 6px; b
 .schedule-start-date input[type="date"] { border-color: #c5e5d5; border-radius: 7px; background: #f8fdf9; color: #285d46; color-scheme: light; }
 .schedule-start-date input[type="date"]:focus { border-color: #69bd94; outline: 2px solid #69bd9430; }
 .schedule-start-date small { color: #70877c; font-size: 9px; font-weight: 400; }
+.log-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; align-items: end; padding: 16px; margin-bottom: 16px; }
+.log-filters label { display: grid; gap: 6px; font-size: 11px; font-weight: 600; }
+.log-filters select { height: 38px; border: 1px solid #d5dbe8; border-radius: 8px; padding: 0 8px; background: #fff; }
+:host ::ng-deep tr.log-error > td { background: #fde2e2; }
+.log-sub { display: block; color: #6b7385; font-size: 10px; }
+.log-detail { display: grid; gap: 8px; font-size: 12px; }
+.log-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 16px; font-size: 12px; }
 :host ::ng-deep .schedule-start-date .p-datepicker { width: 100%; }
 ::ng-deep .schedule-weekday-picker .p-datepicker-day[data-p-disabled="true"],
 ::ng-deep .schedule-weekday-picker .p-datepicker-day.p-disabled { background: #fde2e2; color: #b45a5a; opacity: 1; cursor: not-allowed; }

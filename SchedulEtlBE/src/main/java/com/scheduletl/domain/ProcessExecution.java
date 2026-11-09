@@ -44,6 +44,9 @@ public class ProcessExecution {
     @Column(length = 4000)
     private String statusMessage;
 
+    @Column(length = 20)
+    private String triggerType;
+
     @Column(length = 120000)
     private String logs;
 

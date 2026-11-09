@@ -1,7 +1,9 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  ProcessEventLogFilter,
+  ProcessEventLogPage,
   CreateGroup,
   CreateProcess,
   CreateProfile,
@@ -189,6 +191,23 @@ export class ScheduleApiService {
 
   createGroup(request: CreateGroup): Observable<UserGroup> {
     return this.http.post<UserGroup>(`${this.baseUrl}/groups`, request);
+  }
+
+  searchProcessLogs(filter: ProcessEventLogFilter): Observable<ProcessEventLogPage> {
+    let params = new HttpParams().set('page', filter.page).set('size', filter.size);
+    const optional: [string, string | number | null | undefined][] = [
+      ['text', filter.text?.trim()],
+      ['level', filter.level],
+      ['eventType', filter.eventType],
+      ['triggerType', filter.triggerType],
+      ['schedulerId', filter.schedulerId],
+      ['from', filter.from],
+      ['to', filter.to],
+    ];
+    for (const [key, value] of optional) {
+      if (value !== null && value !== undefined && value !== '') params = params.set(key, value);
+    }
+    return this.http.get<ProcessEventLogPage>(`${this.baseUrl}/process-logs`, { params });
   }
 
   private processCommand(schedulerId: number, processId: number, command: string): Observable<ProcessExecution> {

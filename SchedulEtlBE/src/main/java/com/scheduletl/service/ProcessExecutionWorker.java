@@ -18,6 +18,7 @@ public class ProcessExecutionWorker {
 
     private final ProcessExecutionRepository processExecutionRepository;
     private final ShellScriptExecutor shellScriptExecutor;
+    private final ProcessLogService processLogService;
 
     @Transactional
     public void markRunning(Long executionId) {
@@ -27,6 +28,20 @@ public class ProcessExecutionWorker {
         execution.setStatusMessage("Process started");
         execution.setLogs("Process execution started at: " + execution.getStartedAt());
         processExecutionRepository.save(execution);
+        processLogService.log(execution, "STARTED", ProcessLogService.INFO, "Avvio",
+                "Process started", "Process execution started at: " + execution.getStartedAt());
+    }
+
+    @Transactional(readOnly = true)
+    public void logStep(Long executionId, String stepName, String message) {
+        processExecutionRepository.findById(executionId).ifPresent(execution ->
+                processLogService.log(execution, "STEP", ProcessLogService.INFO, stepName, message, null));
+    }
+
+    @Transactional(readOnly = true)
+    public void logEvent(Long executionId, String eventType, String level, String message) {
+        processExecutionRepository.findById(executionId).ifPresent(execution ->
+                processLogService.log(execution, eventType, level, null, message, null));
     }
 
     public Outcome execute(String processType, String configuration) {
@@ -73,6 +88,12 @@ public class ProcessExecutionWorker {
         execution.setLogs(outcome.logs());
         execution.setFinishedAt(LocalDateTime.now());
         processExecutionRepository.save(execution);
+        String level = outcome.state() == ProcessState.FAILED ? ProcessLogService.ERROR
+                : outcome.state() == ProcessState.STOPPED || outcome.state() == ProcessState.CANCELLED
+                ? ProcessLogService.WARN : ProcessLogService.INFO;
+        processLogService.log(execution, outcome.state().name(), level, "Esito",
+                outcome.statusMessage() + (outcome.exitCode() == null ? "" : " (exit code " + outcome.exitCode() + ")"),
+                outcome.logs());
     }
 
     @Transactional
@@ -84,6 +105,7 @@ public class ProcessExecutionWorker {
         execution.setExitCode(null);
         execution.setFinishedAt(LocalDateTime.now());
         processExecutionRepository.save(execution);
+        processLogService.log(execution, "CANCELLED", ProcessLogService.WARN, "Annullamento", reason, null);
     }
 
     private ProcessExecution findExecution(Long executionId) {

@@ -37,6 +37,7 @@ import {
   RegisteredShellScript,
   ProcessDefinition,
   ProcessExecution,
+  ProcessEventLog,
   ProcessScheduleDayName,
   ProcessType,
   ShellCommandOption,
@@ -49,7 +50,7 @@ import { ScheduleApiService } from './schedule-api.service';
 import { AdminAuthService } from './admin-auth.service';
 import 'chart.js/auto';
 
-type ViewName = 'overview' | 'schedulers' | 'processes' | 'ownership' | 'shell-commands' | 'history';
+type ViewName = 'overview' | 'schedulers' | 'processes' | 'ownership' | 'shell-commands' | 'history' | 'process-logs';
 type DialogMode = 'scheduler' | 'process' | 'profile' | 'group' | 'assign' | null;
 type ProcessAction = 'start' | 'pause' | 'resume' | 'stop';
 
@@ -167,6 +168,7 @@ export class App implements OnDestroy, OnInit {
     { id: 'schedulers', label: 'Scheduler', icon: 'pi pi-calendar' },
     { id: 'processes', label: 'Processi', icon: 'pi pi-sitemap' },
     { id: 'shell-commands', label: 'Comandi autorizzati', icon: 'pi pi-terminal' },
+    { id: 'process-logs', label: 'Log processi', icon: 'pi pi-list' },
     { id: 'ownership', label: 'Utenti e gruppi', icon: 'pi pi-users' },
   ];
   readonly processActions: { id: ProcessAction; label: string; icon: string }[] = [
@@ -1113,6 +1115,66 @@ export class App implements OnDestroy, OnInit {
     if (view === 'processes') this.startProcessStatusPolling();
     else this.stopProcessStatusPolling();
     if (view === 'shell-commands') void this.refreshShellCatalogs();
+    if (view === 'process-logs') void this.loadProcessLogs();
+  }
+
+  readonly logLevelOptions = ['INFO', 'WARN', 'ERROR'];
+  readonly logEventOptions = ['QUEUED', 'STARTED', 'STEP', 'COMPLETED', 'FAILED', 'CANCELLED', 'PAUSE', 'RESUME', 'STOP'];
+  readonly logTriggerOptions = ['MANUAL', 'SCHEDULED'];
+  readonly logPageSize = 50;
+  processLogs: ProcessEventLog[] = [];
+  processLogTotal = 0;
+  processLogPage = 0;
+  processLogLoading = false;
+  expandedLogIds = new Set<number>();
+  logFilter: {
+    text: string; level: string; eventType: string; triggerType: string;
+    schedulerId: number | null; from: Date | null; to: Date | null;
+  } = { text: '', level: '', eventType: '', triggerType: '', schedulerId: null, from: null, to: null };
+  private static readonly errorTextPattern = /\b(error|errors|exception|failed|failure|fatal|timed out|timeout|errore|fallit\w*)\b/i;
+
+  async loadProcessLogs(page = 0): Promise<void> {
+    this.processLogLoading = true;
+    try {
+      const filter = this.logFilter;
+      const result = await firstValueFrom(this.api.searchProcessLogs({
+        text: filter.text,
+        level: filter.level,
+        eventType: filter.eventType,
+        triggerType: filter.triggerType,
+        schedulerId: filter.schedulerId,
+        from: filter.from ? `${this.toIsoDate(filter.from)}T00:00:00` : undefined,
+        to: filter.to ? `${this.toIsoDate(filter.to)}T23:59:59` : undefined,
+        page,
+        size: this.logPageSize,
+      }));
+      this.processLogs = result.items;
+      this.processLogTotal = result.totalElements;
+      this.processLogPage = result.page;
+      this.expandedLogIds.clear();
+    } catch (error) {
+      this.reportError(error);
+    } finally {
+      this.processLogLoading = false;
+    }
+  }
+
+  resetLogFilter(): void {
+    this.logFilter = { text: '', level: '', eventType: '', triggerType: '', schedulerId: null, from: null, to: null };
+    void this.loadProcessLogs();
+  }
+
+  get processLogLastPage(): number {
+    return Math.max(Math.ceil(this.processLogTotal / this.logPageSize) - 1, 0);
+  }
+
+  toggleLogDetails(log: ProcessEventLog): void {
+    if (!this.expandedLogIds.delete(log.id)) this.expandedLogIds.add(log.id);
+  }
+
+  isErrorLog(log: ProcessEventLog): boolean {
+    return log.level === 'ERROR' || log.state === 'FAILED'
+      || App.errorTextPattern.test(log.message) || (!!log.details && App.errorTextPattern.test(log.details));
   }
 
   trackById(_index: number, item: { id: number }): number {

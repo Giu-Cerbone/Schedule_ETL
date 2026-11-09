@@ -27,7 +27,7 @@
 
   <main class="main-area">
     <header class="topbar">
-      <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>{{ view === 'overview' ? 'Dashboard' : view === 'ownership' ? 'Utenti e gruppi' : view === 'history' ? 'Esecuzioni' : view === 'processes' ? 'Processi' : 'Scheduler' }}</strong></div>
+      <div class="breadcrumb"><span>Workspace</span><i class="pi pi-angle-right"></i><strong>{{ view === 'overview' ? 'Dashboard' : view === 'ownership' ? 'Utenti e gruppi' : view === 'history' ? 'Esecuzioni' : view === 'process-logs' ? 'Log processi' : view === 'processes' ? 'Processi' : 'Scheduler' }}</strong></div>
       <div class="topbar-actions">
         <span class="live-status"><span class="connection-dot"></span> Backend configurato</span>
         <button pButton type="button" icon="pi pi-bell" class="p-button-text p-button-rounded bell-button" aria-label="Notifiche"></button>
@@ -149,6 +149,32 @@
               <article class="panel table-panel"><div class="panel-heading"><div><h2>Profili utente</h2><p>{{ profiles.length }} profili registrati</p></div><button pButton label="Nuovo profilo" icon="pi pi-plus" class="p-button-sm" (click)="openDialog('profile')"></button></div><p-table [value]="profiles" [rowTrackBy]="trackById"><ng-template #header><tr><th>Utente</th><th>Email</th><th></th></tr></ng-template><ng-template #body let-profile><tr><td><button class="table-link" (click)="showProfileDetails(profile)"><span class="avatar table-avatar">{{ profile.fullName.slice(0, 2).toUpperCase() }}</span><span><strong>{{ profile.fullName }}</strong><small>&#64;{{ profile.username }}</small></span></button></td><td>{{ profile.email }}</td><td><button class="icon-action" (click)="showProfileDetails(profile)" aria-label="Dettagli profilo"><i class="pi pi-arrow-up-right"></i></button></td></tr></ng-template></p-table></article>
               <article class="panel table-panel"><div class="panel-heading"><div><h2>Gruppi di lavoro</h2><p>{{ groups.length }} gruppi registrati</p></div><button pButton label="Nuovo gruppo" icon="pi pi-plus" class="p-button-sm" (click)="openDialog('group')"></button></div><p-table [value]="groups" [rowTrackBy]="trackById"><ng-template #header><tr><th>Gruppo</th><th>Descrizione</th><th></th></tr></ng-template><ng-template #body let-group><tr><td><button class="table-link" (click)="showGroupDetails(group)"><span class="group-avatar"><i class="pi pi-users"></i></span><span><strong>{{ group.name }}</strong><small>Gruppo #{{ group.id }}</small></span></button></td><td>{{ group.description || '—' }}</td><td><button class="icon-action" (click)="showGroupDetails(group)" aria-label="Dettagli gruppo"><i class="pi pi-arrow-up-right"></i></button></td></tr></ng-template></p-table></article>
             </div>
+          }
+          @case ('process-logs') {
+            <div class="page-heading"><div><p class="eyebrow">AUDIT</p><h1>Log processi</h1><p class="page-subtitle">Stato, schedulazione, step ed esito di ogni esecuzione. Le righe in errore sono evidenziate.</p></div><button pButton label="Aggiorna" icon="pi pi-refresh" class="p-button-outlined" [loading]="processLogLoading" (click)="loadProcessLogs(processLogPage)"></button></div>
+            <article class="panel log-filters">
+              <label>Ricerca testo<input pInputText [(ngModel)]="logFilter.text" placeholder="Messaggio, output, processo, scheduler..." (keydown.enter)="loadProcessLogs()" /></label>
+              <label>Livello<select [(ngModel)]="logFilter.level"><option value="">Tutti</option>@for (option of logLevelOptions; track option) { <option [value]="option">{{ option }}</option> }</select></label>
+              <label>Evento<select [(ngModel)]="logFilter.eventType"><option value="">Tutti</option>@for (option of logEventOptions; track option) { <option [value]="option">{{ option }}</option> }</select></label>
+              <label>Avvio<select [(ngModel)]="logFilter.triggerType"><option value="">Tutti</option>@for (option of logTriggerOptions; track option) { <option [value]="option">{{ option }}</option> }</select></label>
+              <label>Scheduler<select [(ngModel)]="logFilter.schedulerId"><option [ngValue]="null">Tutti</option>@for (scheduler of schedulers; track scheduler.id) { <option [ngValue]="scheduler.id">{{ scheduler.name }}</option> }</select></label>
+              <label>Dal<p-datepicker [(ngModel)]="logFilter.from" dateFormat="dd/mm/yy" [showIcon]="true" [showClear]="true" appendTo="body" placeholder="gg/mm/aaaa"></p-datepicker></label>
+              <label>Al<p-datepicker [(ngModel)]="logFilter.to" dateFormat="dd/mm/yy" [showIcon]="true" [showClear]="true" appendTo="body" placeholder="gg/mm/aaaa"></p-datepicker></label>
+              <div class="heading-actions"><button pButton label="Cerca" icon="pi pi-search" (click)="loadProcessLogs()"></button><button pButton label="Azzera" icon="pi pi-filter-slash" class="p-button-text" (click)="resetLogFilter()"></button></div>
+            </article>
+            <article class="panel table-panel">
+              <p-table [value]="processLogs" [rowTrackBy]="trackById">
+                <ng-template #header><tr><th></th><th>Data/ora</th><th>Livello</th><th>Evento</th><th>Step</th><th>Processo</th><th>Scheduler</th><th>Avvio</th><th>Messaggio</th></tr></ng-template>
+                <ng-template #body let-log>
+                  <tr [class.log-error]="isErrorLog(log)"><td><button class="icon-action" (click)="toggleLogDetails(log)" [attr.aria-label]="'Dettagli log ' + log.id"><i [class]="expandedLogIds.has(log.id) ? 'pi pi-chevron-down' : 'pi pi-chevron-right'"></i></button></td><td>{{ log.loggedAt | date:'dd/MM/yyyy HH:mm:ss' }}</td><td><p-tag [value]="log.level" [severity]="log.level === 'ERROR' ? 'danger' : log.level === 'WARN' ? 'warn' : 'info'"></p-tag></td><td>{{ log.eventType }}</td><td>{{ log.stepNumber ?? '—' }}{{ log.stepName ? ' · ' + log.stepName : '' }}</td><td><strong>{{ log.processName || '—' }}</strong><small class="log-sub">#{{ log.processDefinitionId ?? '—' }} · {{ log.processType || '—' }} · exec #{{ log.executionId ?? '—' }}</small></td><td>{{ log.schedulerName || '—' }}</td><td>{{ log.triggerType || '—' }}</td><td>{{ log.message }}</td></tr>
+                  @if (expandedLogIds.has(log.id)) {
+                    <tr [class.log-error]="isErrorLog(log)"><td></td><td colspan="8"><div class="log-detail"><span><strong>Stato:</strong> {{ log.state || '—' }} · <strong>Exit code:</strong> {{ log.exitCode ?? '—' }} · <strong>Ordine:</strong> {{ log.sequenceOrder ?? '—' }} · <strong>Padre:</strong> {{ log.parentProcessId ? '#' + log.parentProcessId : '—' }}</span><span><strong>Pianificazione:</strong> {{ log.scheduleInfo || 'Nessuna (solo avvio manuale)' }}</span><pre class="log-cell">{{ log.details || 'Nessun dettaglio.' }}</pre></div></td></tr>
+                  }
+                </ng-template>
+                <ng-template #emptymessage><tr><td colspan="9"><div class="table-empty">Nessun log trovato con i filtri selezionati.</div></td></tr></ng-template>
+              </p-table>
+              <div class="log-pager"><span>{{ processLogTotal }} righe · pagina {{ processLogPage + 1 }} di {{ processLogLastPage + 1 }}</span><button pButton icon="pi pi-angle-left" class="p-button-text p-button-sm" [disabled]="processLogPage === 0 || processLogLoading" (click)="loadProcessLogs(processLogPage - 1)" aria-label="Pagina precedente"></button><button pButton icon="pi pi-angle-right" class="p-button-text p-button-sm" [disabled]="processLogPage >= processLogLastPage || processLogLoading" (click)="loadProcessLogs(processLogPage + 1)" aria-label="Pagina successiva"></button></div>
+            </article>
           }
           @case ('history') {
             <div class="page-heading"><div><p class="eyebrow">AUDIT</p><h1>Cronologia esecuzioni</h1><p class="page-subtitle">{{ selectedProcess ? 'Processo: ' + selectedProcess.name : 'Seleziona la cronologia da un processo.' }}</p></div><button pButton label="Torna ai processi" icon="pi pi-arrow-left" class="p-button-outlined" (click)="setView('processes')"></button></div>

@@ -157,3 +157,45 @@ export interface CreateGroup {
   name: string;
   description: string;
 }
+
+export interface ProcessEventLog {
+  id: number;
+  loggedAt: string;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  eventType: string;
+  stepNumber: number | null;
+  stepName: string | null;
+  message: string;
+  details: string | null;
+  executionId: number | null;
+  processDefinitionId: number | null;
+  processName: string | null;
+  processType: string | null;
+  parentProcessId: number | null;
+  sequenceOrder: number | null;
+  schedulerId: number | null;
+  schedulerName: string | null;
+  triggerType: string | null;
+  scheduleInfo: string | null;
+  state: string | null;
+  exitCode: number | null;
+}
+
+export interface ProcessEventLogPage {
+  items: ProcessEventLog[];
+  totalElements: number;
+  page: number;
+  size: number;
+}
+
+export interface ProcessEventLogFilter {
+  text?: string;
+  level?: string;
+  eventType?: string;
+  triggerType?: string;
+  schedulerId?: number | null;
+  from?: string;
+  to?: string;
+  page: number;
+  size: number;
+}

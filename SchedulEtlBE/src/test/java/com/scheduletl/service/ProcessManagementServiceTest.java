@@ -470,7 +470,8 @@ class ProcessManagementServiceTest {
                                              Semaphore semaphore) {
         return new ProcessManagementService(schedulerRepository, processDefinitionRepository,
                 processExecutionRepository, processTypeRepository,
-                new ProcessExecutionWorker(processExecutionRepository, shellCommandExecutor), executor, semaphore);
+                new ProcessExecutionWorker(processExecutionRepository, shellCommandExecutor,
+                        mock(ProcessLogService.class)), executor, semaphore);
     }
 
     private ProcessType processType() {

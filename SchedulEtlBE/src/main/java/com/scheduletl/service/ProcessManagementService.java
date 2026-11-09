@@ -240,7 +240,8 @@ public class ProcessManagementService {
         }
 
         try {
-            QueuedProcessNode queuedTree = queueTree(processTree, definition.getScheduler(), "Queued for execution");
+            QueuedProcessNode queuedTree = queueTree(processTree, definition.getScheduler(), "Queued for execution",
+                    scheduledStart ? "SCHEDULED" : "MANUAL");
             ProcessExecutionResponse response = new ProcessExecutionResponse(
                     queuedTree.executionId(), schedulerId, processDefinitionId, ProcessState.QUEUED,
                     null, null, null, "Queued for execution", "Queued for execution");
@@ -275,7 +276,7 @@ public class ProcessManagementService {
                 definition.isRunIfParentFails(), children);
     }
 
-    private QueuedProcessNode queueTree(ProcessNode node, Scheduler scheduler, String message) {
+    private QueuedProcessNode queueTree(ProcessNode node, Scheduler scheduler, String message, String triggerType) {
         ProcessDefinition definition = processDefinitionRepository.getReferenceById(node.definitionId());
         ProcessExecution execution = new ProcessExecution();
         execution.setScheduler(scheduler);
@@ -283,11 +284,15 @@ public class ProcessManagementService {
         execution.setState(ProcessState.QUEUED);
         execution.setStatusMessage(message);
         execution.setLogs(message);
+        execution.setTriggerType(triggerType);
         execution.setStartedAt(null);
         execution.setExitCode(null);
         ProcessExecution queued = processExecutionRepository.save(execution);
+        processExecutionWorker.logEvent(queued.getId(), "QUEUED", ProcessLogService.INFO,
+                message + " (" + triggerType + ")");
         List<QueuedProcessNode> children = node.children().stream()
-                .map(child -> queueTree(child, scheduler, "Queued after parent process " + node.definitionId()))
+                .map(child -> queueTree(child, scheduler, "Queued after parent process " + node.definitionId(),
+                        triggerType))
                 .toList();
         return new QueuedProcessNode(node, queued.getId(), children);
     }
@@ -323,9 +328,13 @@ public class ProcessManagementService {
         boolean permitAcquired = false;
         try {
             if ("SHELL_CMD".equals(node.process().type())) {
+                processExecutionWorker.logStep(node.executionId(), "Attesa slot",
+                        "In attesa di uno slot di esecuzione disponibile");
                 processExecutionSemaphore.acquire();
                 permitAcquired = true;
             }
+            processExecutionWorker.logStep(node.executionId(), "Esecuzione",
+                    "Esecuzione del processo di tipo " + node.process().type());
             outcome = processExecutionWorker.execute(node.process().type(), node.process().configuration(),
                     logs -> processExecutionWorker.updateLogs(node.executionId(), logs));
         } catch (InterruptedException exception) {
@@ -346,6 +355,10 @@ public class ProcessManagementService {
             } else {
                 runnableChildren.add(child);
             }
+        }
+        if (!runnableChildren.isEmpty()) {
+            processExecutionWorker.logStep(node.executionId(), "Processi figli",
+                    "Avvio di " + runnableChildren.size() + " processo/i figlio");
         }
         if (runnableChildren.size() == 1) {
             executeTree(runnableChildren.getFirst());
@@ -470,6 +483,7 @@ public class ProcessManagementService {
 
         execution.setFinishedAt(LocalDateTime.now());
         ProcessExecution saved = processExecutionRepository.save(execution);
+        processExecutionWorker.logEvent(saved.getId(), command.name(), ProcessLogService.WARN, statusMessage);
         return toExecutionResponse(saved);
     }
 
