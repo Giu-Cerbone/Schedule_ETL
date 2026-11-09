@@ -138,6 +138,9 @@ code { color: #69738a; font-size: 10px; background: #f5f6fa; padding: 4px 6px; b
 .schedule-start-date input[type="date"] { border-color: #c5e5d5; border-radius: 7px; background: #f8fdf9; color: #285d46; color-scheme: light; }
 .schedule-start-date input[type="date"]:focus { border-color: #69bd94; outline: 2px solid #69bd9430; }
 .schedule-start-date small { color: #70877c; font-size: 9px; font-weight: 400; }
+:host ::ng-deep .schedule-start-date .p-datepicker { width: 100%; }
+::ng-deep .schedule-weekday-picker .p-datepicker-day[data-p-disabled="true"],
+::ng-deep .schedule-weekday-picker .p-datepicker-day.p-disabled { background: #fde2e2; color: #b45a5a; opacity: 1; cursor: not-allowed; }
 .schedule-day-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .schedule-day-options label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #d9eee4; border-radius: 7px; background: #eaf7f0; color: #39745b; font-size: 10px; cursor: pointer; }
 .schedule-day-options input { margin: 0; accent-color: #35a978; }

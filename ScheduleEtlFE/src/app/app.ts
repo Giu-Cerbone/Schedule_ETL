@@ -13,6 +13,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { ChartModule } from 'primeng/chart';
+import { DatePickerModule } from 'primeng/datepicker';
 import { DialogModule } from 'primeng/dialog';
 import { InputTextModule } from 'primeng/inputtext';
 import { SelectModule } from 'primeng/select';
@@ -60,6 +61,7 @@ type ProcessAction = 'start' | 'pause' | 'resume' | 'stop';
     FormsModule,
     ButtonModule,
     ChartModule,
+    DatePickerModule,
     DialogModule,
     InputTextModule,
     SelectModule,
@@ -787,6 +789,45 @@ export class App implements OnDestroy, OnInit {
     };
   }
 
+  private static readonly weekdayNumbers: Record<string, number> = {
+    SUNDAY: 0, MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3, THURSDAY: 4, FRIDAY: 5, SATURDAY: 6,
+  };
+
+  // Giorni (0=domenica..6=sabato) non selezionabili: tutti tranne quello della pianificazione.
+  disabledWeekdays(dayOfWeek: string): number[] {
+    const allowed = App.weekdayNumbers[dayOfWeek];
+    return [0, 1, 2, 3, 4, 5, 6].filter((weekday) => weekday !== allowed);
+  }
+
+  private readonly startDateCache = new Map<string, Date>();
+
+  // Il modello resta ISO (aaaa-mm-gg); il datepicker lavora con Date mostrate come gg/mm/aaaa.
+  startDateValue(value?: string | null): Date | null {
+    if (!value) {
+      return null;
+    }
+    let date = this.startDateCache.get(value);
+    if (!date) {
+      const [year, month, day] = value.split('-').map(Number);
+      date = new Date(year, month - 1, day);
+      this.startDateCache.set(value, date);
+    }
+    return date;
+  }
+
+  toIsoDate(value: Date | null): string | null {
+    if (!(value instanceof Date)) {
+      return null;
+    }
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+  }
+
+  private formatItalianDate(iso: string): string {
+    const [year, month, day] = iso.split('-');
+    return `${day}/${month}/${year}`;
+  }
+
   toggleScheduleDay(dayOfWeek: ProcessScheduleDayName, selected: boolean): void {
     const schedule = this.processForm.startSchedule ?? [];
     const existing = schedule.find((day) => day.dayOfWeek === dayOfWeek);
@@ -812,7 +853,7 @@ export class App implements OnDestroy, OnInit {
 
   processScheduleSummary(process: ProcessDefinition): string {
     const days = (process.startSchedule ?? [])
-      .map((day) => `${this.scheduleDayOptions.find((option) => option.value === day.dayOfWeek)?.label ?? day.dayOfWeek}: ${day.times.join(', ')}${day.startDate ? ` dal ${day.startDate}` : ''}`)
+      .map((day) => `${this.scheduleDayOptions.find((option) => option.value === day.dayOfWeek)?.label ?? day.dayOfWeek}: ${day.times.join(', ')}${day.startDate ? ` dal ${this.formatItalianDate(day.startDate)}` : ''}`)
       .join(' · ');
     if (!days) return 'Avvio manuale';
     return days;
