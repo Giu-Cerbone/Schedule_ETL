@@ -1,0 +1,43 @@
+<div class="page-heading">
+  <div><p class="eyebrow">PANORAMICA</p><h1>Buongiorno 👋</h1><p class="page-subtitle">Ecco cosa succede nei tuoi scheduler oggi.</p></div>
+  <div class="heading-actions"><button pButton label="Nuovo scheduler" icon="pi pi-plus" (click)="newScheduler()"></button></div>
+</div>
+<div class="metric-grid">
+  <article class="metric-card"><div class="metric-top"><span>Scheduler attivi</span><span class="metric-icon purple"><i class="pi pi-calendar"></i></span></div><strong>{{ dashboard.activeSchedulerCount }}</strong><small><span class="trend-up"><i class="pi pi-arrow-up-right"></i> {{ workspace.schedulers.length }}</span> totali configurati</small></article>
+  <article class="metric-card"><div class="metric-top"><span>Processi monitorati</span><span class="metric-icon blue"><i class="pi pi-sitemap"></i></span></div><strong>{{ workspace.processes.length }}</strong><small>{{ dashboard.enabledProcesses }} abilitati sullo scheduler selezionato</small></article>
+  <article class="metric-card"><div class="metric-top"><span>In esecuzione</span><span class="metric-icon green"><i class="pi pi-play-circle"></i></span></div><strong>{{ dashboard.runningProcesses }}</strong><small>processi attualmente attivi</small></article>
+  <article class="metric-card"><div class="metric-top"><span>Profili e gruppi</span><span class="metric-icon orange"><i class="pi pi-users"></i></span></div><strong>{{ workspace.profiles.length }}<span class="metric-plus"> / {{ workspace.groups.length }}</span></strong><small>utenti / gruppi di lavoro</small></article>
+</div>
+<div class="dashboard-grid">
+  <article class="panel activity-panel">
+    <div class="panel-heading"><div><h2>Attività esecuzioni</h2><p>Ultima settimana · scheduler selezionato</p></div><p-select [options]="workspace.schedulers" optionLabel="name" optionValue="id" [ngModel]="workspace.selectedSchedulerId" (ngModelChange)="workspace.chooseScheduler($event)" placeholder="Seleziona scheduler" [showClear]="false"></p-select></div>
+    <div class="chart-area"><p-chart type="line" [data]="dashboard.activityChartData" [options]="dashboard.activityChartOptions"></p-chart></div>
+  </article>
+  <article class="panel status-panel">
+    <div class="panel-heading"><div><h2>Stato processi</h2><p>Distribuzione corrente</p></div><button class="icon-action" (click)="openProcesses()" aria-label="Vai ai processi"><i class="pi pi-arrow-up-right"></i></button></div>
+    @if (workspace.processes.length) { <div class="donut-wrap"><p-chart type="doughnut" [data]="dashboard.stateChartData" [options]="dashboard.stateChartOptions"></p-chart><span class="donut-total">{{ workspace.processes.length }}<small>processi</small></span></div> }
+    @else { <div class="empty-chart"><i class="pi pi-chart-pie"></i><span>Nessun processo per questo scheduler</span></div> }
+  </article>
+</div>
+<article class="panel pipeline-panel">
+  <div class="panel-heading"><div><h2>Flusso di processo</h2><p>{{ workspace.selectedScheduler?.name ?? 'Seleziona uno scheduler' }} · pipeline configurata</p></div><button pButton label="Gestisci processi" icon="pi pi-arrow-right" iconPos="right" class="p-button-text" (click)="openProcesses()"></button></div>
+  @if (workspace.processes.length) {
+    <div class="flow-track">
+      @for (process of workspace.orderedProcesses; track process.id; let last = $last; let index = $index) {
+        <div class="flow-node" [class.flow-running]="workspace.latestState(process.id) === 'RUNNING'">
+          <span class="flow-step">STEP 0{{ index + 1 }}</span><span class="flow-icon"><i [class]="index === 0 ? 'pi pi-download' : index === workspace.processes.length - 1 ? 'pi pi-upload' : 'pi pi-cog'"></i></span><strong>{{ process.name }}</strong><small>{{ process.type }}</small>
+          <p-tag [value]="labels.stateLabel(workspace.latestState(process.id))" [severity]="labels.stateSeverity(workspace.latestState(process.id))"></p-tag>
+        </div>
+        @if (!last) { <span class="flow-connector"><i class="pi pi-angle-right"></i></span> }
+      }
+    </div>
+  } @else { <div class="empty-state">Aggiungi un processo per visualizzare il flusso.</div> }
+</article>
+<article class="panel table-panel">
+  <div class="panel-heading"><div><h2>Scheduler</h2><p>Stato e pianificazione dei tuoi scheduler</p></div><button pButton label="Vedi tutti" icon="pi pi-arrow-right" iconPos="right" class="p-button-text" (click)="openSchedulers()"></button></div>
+  <p-table [value]="workspace.schedulers.slice(0, 5)" [rowTrackBy]="trackById">
+    <ng-template #header><tr><th>Nome scheduler</th><th>Owner</th><th>Gruppo</th><th>Pianificazione</th><th>Stato</th><th></th></tr></ng-template>
+    <ng-template #body let-scheduler><tr><td><span class="table-link"><span class="table-icon"><i class="pi pi-calendar"></i></span><span><strong>{{ scheduler.name }}</strong><small>#{{ scheduler.id }} · {{ scheduler.description || 'Nessuna descrizione' }}</small></span></span></td><td>{{ workspace.ownerName(scheduler.ownerProfileId) }}</td><td>{{ workspace.groupName(scheduler.groupId) }}</td><td><code>{{ scheduler.cronExpression }}</code></td><td><p-tag [value]="labels.stateLabel(scheduler.status)" [severity]="labels.stateSeverity(scheduler.status)"></p-tag></td><td><button class="icon-action" (click)="openProcesses(scheduler)" aria-label="Apri processi"><i class="pi pi-arrow-up-right"></i></button></td></tr></ng-template>
+    <ng-template #emptymessage><tr><td colspan="6"><div class="table-empty">Nessuno scheduler disponibile.</div></td></tr></ng-template>
+  </p-table>
+</article>

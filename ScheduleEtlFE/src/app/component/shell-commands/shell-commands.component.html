@@ -1,0 +1,48 @@
+<div class="page-heading"><div><p class="eyebrow">CONFIGURAZIONE ESECUTORE</p><h1>Comandi autorizzati</h1><p class="page-subtitle">Catalogo server-side degli script e dei comandi selezionabili nei processi SHELL_CMD.</p></div><button pButton label="Aggiorna catalogo" icon="pi pi-refresh" class="p-button-outlined" (click)="catalog.refresh()"></button></div>
+@if (workspace.loading) {
+  <div class="loading-state"><i class="pi pi-spin pi-spinner"></i><span>Caricamento dati dal backend...</span></div>
+} @else {
+  <div class="catalog-notice"><i class="pi pi-lock"></i><span>Il catalogo è definito sul backend: script nella directory approvata e comandi in <code>application.yml</code>. Gli amministratori possono modificare i contenuti degli script approvati; i comandi non vengono modificati dal browser.</span></div>
+  <div class="ownership-grid shell-catalog-grid">
+    <article class="panel table-panel">
+      <div class="panel-heading"><div><h2>Script approvati</h2><p>{{ workspace.shellScripts.length }} script compatibili con il sistema backend</p></div>@if (catalog.adminAuth.authenticated) { <button pButton label="Nuovo script" icon="pi pi-plus" class="p-button-sm" (click)="catalog.newScript()"></button> }</div>
+      <p-table [value]="workspace.shellScripts">
+        <ng-template #header><tr><th>ID</th><th>Nome</th><th>Nome file</th><th>Tipo</th><th>Interprete</th><th></th></tr></ng-template>
+        <ng-template #body let-script><tr><td><code>{{ script.id }}</code></td><td>{{ script.name }}</td><td>{{ script.fileName }}@if (catalog.registeredScript(script.id); as registered) { <small class="script-path">{{ registered.path }}</small> }</td><td><p-tag [value]="script.type" severity="info"></p-tag></td><td>{{ script.type === 'SH' ? '/bin/sh' : script.type === 'POWERSHELL' ? 'PowerShell' : 'cmd.exe' }}</td><td class="row-actions">@if (catalog.adminAuth.authenticated) { <button class="icon-action" (click)="catalog.editScript(script.id)" aria-label="Modifica script"><i class="pi pi-pencil"></i></button><button class="icon-action" (click)="catalog.deleteScript(script.id)" aria-label="Elimina script"><i class="pi pi-trash"></i></button> }</td></tr></ng-template>
+        <ng-template #emptymessage><tr><td colspan="6"><div class="table-empty">Nessuno script approvato trovato.</div></td></tr></ng-template>
+      </p-table>
+      @if (catalog.adminAuth.authenticated && catalog.scriptEditorOpen) {
+        <div class="catalog-editor"><h3>{{ catalog.editingScriptName === null ? 'Nuovo script autorizzato' : 'Modifica script autorizzato' }}</h3><div class="form-grid">@if (catalog.editingScriptName === null) { <label>Nome <input pInputText [(ngModel)]="catalog.selectedScriptName" maxlength="200" placeholder="es. Export giornaliero" required /></label> } @else { <label>Nome <input pInputText [(ngModel)]="catalog.scriptForm.name" maxlength="200" required /></label> }<label>Percorso script <div class="heading-actions"><input pInputText [value]="catalog.selectedScriptPath" readonly placeholder="Nessun file selezionato" /><button pButton type="button" icon="pi pi-folder-open" label="Sfoglia..." class="p-button-outlined" (click)="catalog.openFileBrowser()"></button></div><small>Seleziona un file sul server backend. Estensioni consentite: .sh su Unix; .cmd, .bat o .ps1 su Windows. Lo script viene eseguito dal percorso indicato, senza copiarlo.</small></label><div class="heading-actions"><button pButton label="Annulla" class="p-button-text" (click)="catalog.cancelScriptEdit()"></button><button pButton label="Salva script" icon="pi pi-check" [loading]="catalog.saving" [disabled]="!catalog.selectedScriptPath || (catalog.editingScriptName === null && !catalog.selectedScriptName.trim())" (click)="catalog.saveScript()"></button></div></div></div>
+      }
+    </article>
+    <article class="panel table-panel">
+      <div class="panel-heading"><div><h2>Comandi autorizzati</h2><p>{{ workspace.shellCommands.length }} comandi configurati</p></div>@if (catalog.adminAuth.authenticated) { <button pButton label="Nuovo comando" icon="pi pi-plus" class="p-button-sm" (click)="catalog.newCommand()"></button> }</div>
+      <p-table [value]="workspace.shellCommands">
+        <ng-template #header><tr><th>ID</th><th>Nome</th><th>Comando</th><th>Tipo</th><th></th></tr></ng-template>
+        <ng-template #body let-command><tr><td><code>{{ command.id }}</code></td><td><strong>{{ command.name }}</strong></td><td>@if (catalog.adminAuth.authenticated) { <small class="command-executable">{{ catalog.adminShellCommands.find(item => item.id === command.id)?.executable }}</small> }</td><td><p-tag [value]="command.type" severity="info"></p-tag></td><td class="row-actions">@if (catalog.adminAuth.authenticated) { <button class="icon-action" (click)="catalog.editCommandById(command.id)" aria-label="Modifica comando"><i class="pi pi-pencil"></i></button><button class="icon-action" (click)="catalog.deleteCommand(command)" aria-label="Elimina comando"><i class="pi pi-trash"></i></button> }</td></tr></ng-template>
+        <ng-template #emptymessage><tr><td colspan="5"><div class="table-empty">Nessun comando autorizzato configurato.</div></td></tr></ng-template>
+      </p-table>
+      @if (catalog.adminAuth.authenticated && catalog.commandEditorOpen) {
+        <div class="catalog-editor"><h3>{{ catalog.editingCommandId === null ? 'Nuovo comando autorizzato' : 'Modifica comando autorizzato' }}</h3><div class="form-grid">@if (catalog.editingCommandId !== null) { <label>ID <input pInputText [ngModel]="catalog.editingCommandId" disabled /></label> }<label>Nome <input pInputText [(ngModel)]="catalog.commandForm.name" maxlength="200" required /></label><label>Tipo <input pInputText [(ngModel)]="catalog.commandForm.type" placeholder="es. REPORT" /></label><label>Percorso eseguibile assoluto <input pInputText [(ngModel)]="catalog.commandForm.executable" placeholder="es. C:\\Tools\\tool.exe" /></label><label>Argomenti fissi (uno per riga) <textarea pTextarea [(ngModel)]="catalog.commandArgumentsText" rows="5"></textarea><small>Ogni riga è un singolo argomento passato direttamente all'eseguibile; non viene interpretata da una shell.</small></label><div class="heading-actions"><button pButton label="Annulla" class="p-button-text" (click)="catalog.cancelCommandEdit()"></button><button pButton label="Salva comando" icon="pi pi-check" [loading]="catalog.saving" (click)="catalog.saveCommand()"></button></div></div></div>
+      }
+    </article>
+  </div>
+  <article class="panel admin-access">
+    @if (!catalog.adminAuth.authenticated) {
+      <div class="panel-heading"><div><h2>Accesso amministratore</h2><p>Autenticati per creare, modificare o cancellare gli elementi eseguibili.</p></div></div>
+      <div class="admin-login"><label>Utente <input pInputText [(ngModel)]="catalog.adminUsername" autocomplete="username" /></label><label>Password <input pInputText type="password" [(ngModel)]="catalog.adminPassword" autocomplete="current-password" /></label><button pButton label="Accedi" icon="pi pi-lock" (click)="catalog.login()"></button></div>
+    } @else {
+      <div class="panel-heading"><div><h2>Amministratore: {{ catalog.adminAuth.username }}</h2><p>Sessione attiva; le modifiche sono protette dal backend.</p></div><button pButton label="Esci" icon="pi pi-sign-out" class="p-button-outlined" (click)="catalog.logout()"></button></div>
+    }
+  </article>
+}
+
+<p-dialog header="Seleziona script sul server" [(visible)]="catalog.browserOpen" [modal]="true" [draggable]="false" [resizable]="false" [style]="{ width: 'min(640px, 94vw)' }">
+  <p class="dialog-copy"><code>{{ catalog.browser.path || 'Unità / radici del server' }}</code></p>
+  <div class="file-browser">
+    @if (catalog.browser.path) { <button type="button" class="file-entry" (click)="catalog.browseTo(catalog.browser.parent ?? '')"><i class="pi pi-arrow-up"></i> ..</button> }
+    @for (entry of catalog.browser.entries; track entry.path) {
+      <button type="button" class="file-entry" (click)="catalog.selectBrowserEntry(entry)"><i class="pi" [class.pi-folder]="entry.directory" [class.pi-file]="!entry.directory"></i> {{ entry.name }}</button>
+    } @empty { <p class="dialog-copy">{{ catalog.browserLoading ? 'Caricamento...' : 'Nessuna cartella o script compatibile.' }}</p> }
+  </div>
+</p-dialog>

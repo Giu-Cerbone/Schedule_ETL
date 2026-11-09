@@ -1,0 +1,24 @@
+<div class="page-heading"><div><p class="eyebrow">AUDIT</p><h1>Log processi</h1><p class="page-subtitle">Stato, schedulazione, step ed esito di ogni esecuzione. Le righe in errore sono evidenziate.</p></div><button pButton label="Aggiorna" icon="pi pi-refresh" class="p-button-outlined" [loading]="logs.loading" (click)="logs.load(logs.page)"></button></div>
+<article class="panel log-filters">
+  <label>Ricerca testo<input pInputText [(ngModel)]="logs.filter.text" placeholder="Messaggio, output, processo, scheduler..." (keydown.enter)="logs.load()" /></label>
+  <label>Livello<select [(ngModel)]="logs.filter.level"><option value="">Tutti</option>@for (option of logs.levelOptions; track option) { <option [value]="option">{{ option }}</option> }</select></label>
+  <label>Evento<select [(ngModel)]="logs.filter.eventType"><option value="">Tutti</option>@for (option of logs.eventOptions; track option) { <option [value]="option">{{ option }}</option> }</select></label>
+  <label>Avvio<select [(ngModel)]="logs.filter.triggerType"><option value="">Tutti</option>@for (option of logs.triggerOptions; track option) { <option [value]="option">{{ option }}</option> }</select></label>
+  <label>Scheduler<select [(ngModel)]="logs.filter.schedulerId"><option [ngValue]="null">Tutti</option>@for (scheduler of workspace.schedulers; track scheduler.id) { <option [ngValue]="scheduler.id">{{ scheduler.name }}</option> }</select></label>
+  <label>Dal<p-datepicker [(ngModel)]="logs.filter.from" dateFormat="dd/mm/yy" [showIcon]="true" [showClear]="true" appendTo="body" placeholder="gg/mm/aaaa"></p-datepicker></label>
+  <label>Al<p-datepicker [(ngModel)]="logs.filter.to" dateFormat="dd/mm/yy" [showIcon]="true" [showClear]="true" appendTo="body" placeholder="gg/mm/aaaa"></p-datepicker></label>
+  <div class="heading-actions"><button pButton label="Cerca" icon="pi pi-search" (click)="logs.load()"></button><button pButton label="Azzera" icon="pi pi-filter-slash" class="p-button-text" (click)="logs.resetFilter()"></button></div>
+</article>
+<article class="panel table-panel">
+  <p-table [value]="logs.logs" [rowTrackBy]="trackById">
+    <ng-template #header><tr><th></th><th>Data/ora</th><th>Livello</th><th>Evento</th><th>Step</th><th>Processo</th><th>Scheduler</th><th>Avvio</th><th>Messaggio</th></tr></ng-template>
+    <ng-template #body let-log>
+      <tr class="log-row" [class.log-error]="logs.isError(log)"><td><button class="icon-action" (click)="logs.toggleDetails(log)" [attr.aria-label]="'Dettagli log ' + log.id"><i [class]="logs.expandedIds.has(log.id) ? 'pi pi-chevron-down' : 'pi pi-chevron-right'"></i></button></td><td>{{ log.loggedAt | date:'dd/MM/yyyy HH:mm:ss' }}</td><td><p-tag [value]="log.level" [severity]="log.level === 'ERROR' ? 'danger' : log.level === 'WARN' ? 'warn' : 'info'"></p-tag></td><td>{{ log.eventType }}</td><td>{{ log.stepNumber ?? '—' }}{{ log.stepName ? ' · ' + log.stepName : '' }}</td><td><strong>{{ log.processName || '—' }}</strong><small class="log-sub">#{{ log.processDefinitionId ?? '—' }} · {{ log.processType || '—' }} · exec #{{ log.executionId ?? '—' }}</small></td><td>{{ log.schedulerName || '—' }}</td><td>{{ log.triggerType || '—' }}</td><td>{{ log.message }}</td></tr>
+      @if (logs.expandedIds.has(log.id)) {
+        <tr class="log-detail-row"><td></td><td colspan="8"><div class="log-detail"><span><strong>Stato:</strong> {{ log.state || '—' }} · <strong>Exit code:</strong> {{ log.exitCode ?? '—' }} · <strong>Ordine:</strong> {{ log.sequenceOrder ?? '—' }} · <strong>Padre:</strong> {{ log.parentProcessId ? '#' + log.parentProcessId : '—' }}</span><span><strong>Pianificazione:</strong> {{ log.scheduleInfo || 'Nessuna (solo avvio manuale)' }}</span><pre class="log-cell">{{ log.details || 'Nessun dettaglio.' }}</pre></div></td></tr>
+      }
+    </ng-template>
+    <ng-template #emptymessage><tr><td colspan="9"><div class="table-empty">Nessun log trovato con i filtri selezionati.</div></td></tr></ng-template>
+  </p-table>
+  <div class="log-pager"><span>{{ logs.total }} righe · pagina {{ logs.page + 1 }} di {{ logs.lastPage + 1 }}</span><button pButton icon="pi pi-angle-left" class="p-button-text p-button-sm" [disabled]="logs.page === 0 || logs.loading" (click)="logs.load(logs.page - 1)" aria-label="Pagina precedente"></button><button pButton icon="pi pi-angle-right" class="p-button-text p-button-sm" [disabled]="logs.page >= logs.lastPage || logs.loading" (click)="logs.load(logs.page + 1)" aria-label="Pagina successiva"></button></div>
+</article>
